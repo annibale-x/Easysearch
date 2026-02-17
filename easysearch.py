@@ -1,11 +1,11 @@
 """
-title: Easysearch - Web Search Assistant
+title: EasyBrief - Information & Search Assistant
 version: 0.0.2
 author: Hannibal
 repo_url: https://github.com/annibale-x/EasySearch
 author_email: annibale.x@gmail.com
 author_url: https://openwebui.com/u/h4nn1b4l
-description: Easy web search and summarize
+description: Easy web search, analysis and visual restructuring
 """
 
 import json
@@ -23,7 +23,7 @@ from open_webui.utils.chat import generate_chat_completion  # type: ignore
 
 # --- CONSTANTS ---
 APP_ICON = "✨"
-APP_NAME = "EasySearch"
+APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
 
