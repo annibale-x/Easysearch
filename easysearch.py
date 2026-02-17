@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Information & Search Assistant
-version: 0.0.2
+version: 0.0.3
 author: Hannibal
 repo_url: https://github.com/annibale-x/EasySearch
 author_email: annibale.x@gmail.com
@@ -27,8 +27,32 @@ APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
 
+BRIEF_PROMPT = """
+Analyze the provided information and reorganize it for immediate visual comprehension following these strict rules:
 
-HTTP_CLIENT = httpx.AsyncClient()
+1. VISUAL FIRST (TABLES): Convert ANY list of items with multiple attributes into a Markdown TABLE. 
+   - Examples: Lists of people (Name | Role/Discipline | Achievement), products (Model | Specs | Price), or events (Date | Event | Location).
+   - If you see comparative data, technical specifications, or pros/cons, use a TABLE.
+
+2. LOGIC & PROCESSES (DIAGRAMS): Represent workflows, timelines, cause-effect relationships, or hierarchies using MERMAID DIAGRAMS.
+   - Use `graph TD` for hierarchies or flows.
+   - Use `sequenceDiagram` for interactions.
+   - Use `pie` for percentages or distributions.
+
+3. TEXT MANAGEMENT (SAY NO TO BULLET WALLS): 
+   - DO NOT use long bullet point lists (more than 5 items). If a list is long, it MUST be converted into a Table or a Diagram.
+   - If a section is short and clear (max 2-3 lines), keep it as is.
+   - Summarize verbose sections into a single paragraph of maximum 3 lines.
+
+4. HIERARCHY & EMOJIS: Use clear headings (##, ###) and relevant emojis.
+   - MANDATORY: Emojis must ALWAYS be placed BEFORE the heading or category text, never at the end.
+
+5. SUMMARY & CLEANLINESS: 
+   - Conclude with a "📌 Key Takeaways" box using a blockquote (>). 
+   - MANDATORY: Do not add any introductory or concluding remarks, meta-talk, or explanations about the format. The output must end exactly at the Key Takeaways box.
+
+GOAL: The user must understand the main concepts at a single glance. Minimize vertical scrolling by using horizontal structures like tables.
+"""
 
 
 class ConfigService:
@@ -43,6 +67,7 @@ class ConfigService:
         self.model = Store(
             {
                 "trigger": ctx.valves.trigger_keyword,
+                "brief_trigger": ctx.valves.brief_trigger_keyword,
                 "debug": ctx.valves.debug or ctx.user_valves.debug,
                 "user_query": "",
                 "id": "",
@@ -189,56 +214,11 @@ class DebugService:
             }
 
         return (
-            f"\n\n<details>\n"
+            f"\n\n<details>\n\n"
             f"<summary>🔍 {APP_NAME} Debug</summary>\n\n"
             f"```json\n{json.dumps(_s(self.ctx.ctx.model), indent=2)}\n```\n\n"
             f"</details>"
         )
-
-
-class NetworkService:
-    """Service for handling HTTP requests."""
-
-    def __init__(self, ctx):
-        """Initialize the NetworkService."""
-
-        self.ctx = ctx
-
-    async def post(
-        self, url: str, payload: dict, headers: dict = None, timeout: int = 120  # type: ignore
-    ) -> httpx.Response:
-        """Perform an asynchronous POST request."""
-
-        if self.ctx.ctx.model.debug:
-            self.ctx.debug.dump(payload, f"POST TO {url}")
-
-        try:
-            r = await HTTP_CLIENT.post(
-                url, json=payload, headers=headers, timeout=timeout
-            )
-            r.raise_for_status()
-            return r
-
-        except Exception as e:
-
-            if hasattr(e, "response") and e.response:  # type: ignore
-                print(f"❌ HTTP ERROR BODY: {e.response.text}", file=sys.stderr)  # type: ignore
-            await self.ctx.debug.error(f"POST {url} failed: {str(e)}")
-            raise e
-
-    async def get(
-        self, url: str, params: dict = None, headers: dict = None  # type: ignore
-    ) -> httpx.Response:
-        """Perform an asynchronous GET request."""
-
-        try:
-            r = await HTTP_CLIENT.get(url, params=params, headers=headers, timeout=30)
-            r.raise_for_status()
-            return r
-
-        except Exception as e:
-            await self.ctx.debug.error(f"GET failed: {str(e)}")
-            raise e
 
 
 class Filter:
@@ -246,7 +226,10 @@ class Filter:
     class Valves(BaseModel):
         debug: bool = Field(default=False)
         trigger_keyword: str = Field(
-            default="??", description="Keyword to trigger the filter logic."
+            default="??", description="Trigger for Web Search + Analysis."
+        )
+        brief_trigger_keyword: str = Field(
+            default="!!", description="Trigger for Text Analysis/Restructuring."
         )
 
     class UserValves(BaseModel):
@@ -266,14 +249,28 @@ class Filter:
         __event_emitter__: callable = None,  # type: ignore
         __request__=None,
     ) -> dict:
-        """Process the incoming request and trigger filter logic if the keyword matches."""
+        """Process the incoming request and trigger filter logic based on keywords."""
 
-        msg = body.get("messages", [])[-1].get("content", "")
-        txt = (msg[0].get("text", "") if isinstance(msg, list) else str(msg)).strip()
+        msg_list = body.get("messages", [])
 
-        trigger = self.valves.trigger_keyword
+        if not msg_list:
+            return body
 
-        if not re.match(rf"^({re.escape(trigger)})(?:\s+|$)", txt, re.IGNORECASE):
+        last_msg = msg_list[-1].get("content", "")
+        txt = (
+            last_msg[0].get("text", "") if isinstance(last_msg, list) else str(last_msg)
+        ).strip()
+
+        trg_search = self.valves.trigger_keyword
+        trg_brief = self.valves.brief_trigger_keyword
+
+        # Regex to detect triggers and optional content
+        m_search = re.match(
+            rf"^({re.escape(trg_search)})(?:\s+|$)(.*)", txt, re.S | re.I
+        )
+        m_brief = re.match(rf"^({re.escape(trg_brief)})(?:\s+|$)(.*)", txt, re.S | re.I)
+
+        if not m_search and not m_brief:
             return body
 
         self.output_content = ""
@@ -284,9 +281,8 @@ class Filter:
         )
 
         self.ctx = ConfigService(self)
-        self.debug, self.net, self.em = (
+        self.debug, self.em = (
             DebugService(self),
-            NetworkService(self),
             EmitterService(__event_emitter__, self),
         )
 
@@ -295,16 +291,36 @@ class Filter:
             "web_search", False
         )
 
-        query = re.sub(rf"^{re.escape(trigger)}\s*", "", txt, flags=re.I).strip()
-        self.ctx.model.user_query, self.ctx.model.id = query, body.get("model")
+        mode_search = bool(m_search)
+        content = (m_search.group(2) if mode_search else m_brief.group(2)).strip()
+
+        # Handle Contextual/Empty Triggers
+        if not content and len(msg_list) > 1:
+            prev_content = msg_list[-2].get("content", "")
+            content = (
+                prev_content[0].get("text", "")
+                if isinstance(prev_content, list)
+                else str(prev_content)
+            )
+            self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
+
+        self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
 
         try:
-            await self.em.emit_status("Initializing...", False)
+            await self.em.emit_status("EasyBrief Analysis...", False)
 
-            # --- Logic Placeholders ---
-            # Example: self.ctx.model.override_web_search = True
+            # Logic: Force Search if ??, Disable if !!
+            if mode_search:
+                self.ctx.model.override_web_search = True
 
-            # Apply Web Search Override if defined
+            else:
+                self.ctx.model.override_web_search = False
+
+            # Inject the Briefing System Prompt
+            instr = f"{BRIEF_PROMPT}\n\nINPUT TO PROCESS:\n{content}"
+            body["messages"][-1]["content"] = instr
+
+            # Apply Web Search Override
             if self.ctx.model.override_web_search is not None:
 
                 if "features" not in body:
@@ -313,9 +329,8 @@ class Filter:
                 body["features"]["web_search"] = self.ctx.model.override_web_search
 
             self.ctx.model.executed = True
-            self.output_content += self.debug.emit()
-            self.debug.log("--- INLET COMPLETE ---")
-            await self.em.emit_status(f"{APP_NAME} Complete", True)
+            self.debug.log(f"Execution Mode: {'Search' if mode_search else 'Brief'}")
+            await self.em.emit_status(f"{APP_NAME} Working", False)
 
         except Exception as e:
             await self.debug.error(e)
@@ -335,18 +350,17 @@ class Filter:
 
             # When suppress_output is True we want to exclusively manage output
             if self.ctx.model.suppress_output is True:
-                if "messages" in body and len(body["messages"]) > 0:
-                    body["messages"][-1]["content"] = self.output_content
 
-            # When suppress_output is False we want to work on assistant message
+                if "messages" in body and len(body["messages"]) > 0:
+                    body["messages"][-1]["content"] = (
+                        self.output_content + self.debug.emit()
+                    )
+
+            # When suppress_output is False we append debug info if needed
             elif self.ctx.model.suppress_output is False:
 
-                # ==> YOUR CODE HERE <==
-                pass
-
-            # Full pass-through mode
-            else:
-                pass
+                if "messages" in body and len(body["messages"]) > 0:
+                    body["messages"][-1]["content"] += self.debug.emit()
 
         self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
         return body
