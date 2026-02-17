@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Information & Search Assistant
-version: 0.0.3
+version: 0.0.7
 author: Hannibal
 repo_url: https://github.com/annibale-x/EasySearch
 author_email: annibale.x@gmail.com
@@ -28,30 +28,49 @@ OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
 
 BRIEF_PROMPT = """
-Analyze the provided information and reorganize it for immediate visual comprehension following these strict rules:
+Analyze the input and reorganize it into a SINGLE unified executive report using an ADAPTIVE VISUAL APPROACH. 
+Break down the information into logical sections. For each section, provide a brief (max 2 lines) introductory context followed by the most suitable visual representation:
 
-1. VISUAL FIRST (TABLES): Convert ANY list of items with multiple attributes into a Markdown TABLE. 
-   - Examples: Lists of people (Name | Role/Discipline | Achievement), products (Model | Specs | Price), or events (Date | Event | Location).
-   - If you see comparative data, technical specifications, or pros/cons, use a TABLE.
+1. LANGUAGE & SEARCH PROTOCOL (STRICT):
+   - DETECT the language of the 'INPUT TO PROCESS' below.
+   - MANDATORY: You MUST perform the web search and write the entire response in that SAME language.
 
-2. LOGIC & PROCESSES (DIAGRAMS): Represent workflows, timelines, cause-effect relationships, or hierarchies using MERMAID DIAGRAMS.
-   - Use `graph TD` for hierarchies or flows.
-   - Use `sequenceDiagram` for interactions.
-   - Use `pie` for percentages or distributions.
+2. DATA, COMPARISONS, CHRONOLOGIES & PROJECTIONS (TABLES - BODY TEXT ONLY):
+   - Use standard Markdown TABLES for all data lists, technical comparisons, chronologies, and financial projections.
+   - MANDATORY: Write tables DIRECTLY in the message body. 
+   - FORBIDDEN: NEVER use triple backticks (```) or single backticks (`) for tables.
+   - FORBIDDEN: NEVER use the word "markdown" to label tables.
+   - START the table immediately with the pipe character (|).
+   - MANDATORY: Ensure there is exactly one empty line before and after every table.
+   - FORBIDDEN: Do not use Mermaid for timelines, gantt charts, or numerical projections.
 
-3. TEXT MANAGEMENT (SAY NO TO BULLET WALLS): 
-   - DO NOT use long bullet point lists (more than 5 items). If a list is long, it MUST be converted into a Table or a Diagram.
-   - If a section is short and clear (max 2-3 lines), keep it as is.
-   - Summarize verbose sections into a single paragraph of maximum 3 lines.
+3. LOGIC, FLOWS & STRUCTURES (MERMAID DIAGRAMS):
+   - MANDATORY: Use ONLY the ```mermaid code block for diagrams (you MUST include the word 'mermaid' after the first three backticks).
+   - MANDATORY SYNTAX: Always wrap all text labels and node names in double quotes (e.g., A["Label (Text)"]).
+   - PROCESSES: Use `graph TD` or `graph LR` for workflows.
+   - INTERACTIONS: Use `sequenceDiagram` for communication between actors.
+   - DISTRIBUTIONS: Use `pie` for market shares.
+   - HIERARCHIES: Use `mindmap` or `graph TD` for breakdowns.
+   - FORBIDDEN: Never use `timeline` or `gantt` keywords.
 
-4. HIERARCHY & EMOJIS: Use clear headings (##, ###) and relevant emojis.
-   - MANDATORY: Emojis must ALWAYS be placed BEFORE the heading or category text, never at the end.
+4. TEXT & CONTEXT MANAGEMENT:
+   - BALANCED APPROACH: Every visual element MUST be preceded by a concise 1-2 line explanation or insight that summarizes the data shown.
+   - NO BULLET WALLS: If a list has >5 items, it MUST be converted into a Table or Diagram.
+   - SPACING: Insert a horizontal divider (---) between every main section to improve readability.
+   - SUMMARY: Summarize verbose text aggressively, keeping any non-visual text block under 3 lines.
 
-5. SUMMARY & CLEANLINESS: 
+5. HIERARCHY & EMOJIS: 
+   - Use clear headings (##, ###).
+   - MANDATORY: Relevant emojis must ALWAYS be placed BEFORE the heading or category text.
+
+6. SUMMARY & CLEANLINESS: 
    - Conclude with a "📌 Key Takeaways" box using a blockquote (>). 
    - MANDATORY: Do not add any introductory or concluding remarks, meta-talk, or explanations about the format. The output must end exactly at the Key Takeaways box.
 
-GOAL: The user must understand the main concepts at a single glance. Minimize vertical scrolling by using horizontal structures like tables.
+CRITICAL RECAP: 
+- Tables: NO backticks, NO code blocks.
+- Mermaid: YES backticks, YES 'mermaid' label.
+- Goal: Professional executive summary.
 """
 
 
@@ -242,6 +261,37 @@ class Filter:
         self.request = self.debug = self.net = self.em = self.ctx = None
         self.output_content = ""
 
+    def _parse_trigger(self, txt: str) -> Optional[dict]:
+        """Validate input and parse trigger, language, and content."""
+
+        s_trg = self.valves.trigger_keyword
+        b_trg = self.valves.brief_trigger_keyword
+
+        # Check which trigger starts the text
+        active = (
+            s_trg
+            if txt.startswith(s_trg)
+            else (b_trg if txt.startswith(b_trg) else None)
+        )
+
+        if not active:
+            return None
+
+        # Extract everything after the trigger
+        remainder = txt[len(active) :]
+        lang = None
+
+        # Check for :lang syntax (e.g. :it)
+        if remainder.startswith(":"):
+            lang = remainder[1:3]
+            remainder = remainder[3:]
+
+        return {
+            "is_search": active == s_trg,
+            "lang": lang,
+            "content": remainder.strip(),
+        }
+
     async def inlet(
         self,
         body: dict,
@@ -261,18 +311,13 @@ class Filter:
             last_msg[0].get("text", "") if isinstance(last_msg, list) else str(last_msg)
         ).strip()
 
-        trg_search = self.valves.trigger_keyword
-        trg_brief = self.valves.brief_trigger_keyword
+        # Phase 1: Parsing & Validation
+        parsed = self._parse_trigger(txt)
 
-        # Regex to detect triggers and optional content
-        m_search = re.match(
-            rf"^({re.escape(trg_search)})(?:\s+|$)(.*)", txt, re.S | re.I
-        )
-        m_brief = re.match(rf"^({re.escape(trg_brief)})(?:\s+|$)(.*)", txt, re.S | re.I)
-
-        if not m_search and not m_brief:
+        if not parsed:
             return body
 
+        # Phase 2: Initialization
         self.output_content = ""
         self.request = __request__
         uv_data = __user__.get("valves", {}) if __user__ else {}
@@ -286,13 +331,12 @@ class Filter:
             EmitterService(__event_emitter__, self),
         )
 
-        # Web Search State Management
+        # Phase 3: State Management
         self.ctx.model.web_search_original = body.get("features", {}).get(
             "web_search", False
         )
-
-        mode_search = bool(m_search)
-        content = (m_search.group(2) if mode_search else m_brief.group(2)).strip()
+        self.ctx.model.forced_language = parsed["lang"]
+        content = parsed["content"]
 
         # Handle Contextual/Empty Triggers
         if not content and len(msg_list) > 1:
@@ -309,18 +353,20 @@ class Filter:
         try:
             await self.em.emit_status("EasyBrief Analysis...", False)
 
-            # Logic: Force Search if ??, Disable if !!
-            if mode_search:
-                self.ctx.model.override_web_search = True
+            # Apply Web Search Override logic
+            self.ctx.model.override_web_search = parsed["is_search"]
 
-            else:
-                self.ctx.model.override_web_search = False
+            # Build Language Instruction
+            lang_instr = (
+                f"MANDATORY: Respond in {parsed['lang'].upper()}."
+                if parsed["lang"]
+                else "DETECT and match the input language."
+            )
 
             # Inject the Briefing System Prompt
-            instr = f"{BRIEF_PROMPT}\n\nINPUT TO PROCESS:\n{content}"
+            instr = f"{BRIEF_PROMPT}\n\n{lang_instr}\n\nINPUT TO PROCESS:\n{content}"
             body["messages"][-1]["content"] = instr
 
-            # Apply Web Search Override
             if self.ctx.model.override_web_search is not None:
 
                 if "features" not in body:
@@ -329,7 +375,9 @@ class Filter:
                 body["features"]["web_search"] = self.ctx.model.override_web_search
 
             self.ctx.model.executed = True
-            self.debug.log(f"Execution Mode: {'Search' if mode_search else 'Brief'}")
+            self.debug.log(
+                f"Execution Mode: {'Search' if parsed['is_search'] else 'Brief'} | Lang: {parsed['lang'] or 'Auto'}"
+            )
             await self.em.emit_status(f"{APP_NAME} Working", False)
 
         except Exception as e:
@@ -343,12 +391,15 @@ class Filter:
         """Process the outgoing response and restore web search state."""
 
         if self.ctx and self.ctx.model.executed:
-            # Restore Web Search original state
+
+            if "messages" in body and len(body["messages"]) > 0:
+                self.ctx.model.raw_assistant_response = body["messages"][-1].get(
+                    "content", ""
+                )
 
             if "features" in body:
                 body["features"]["web_search"] = self.ctx.model.web_search_original
 
-            # When suppress_output is True we want to exclusively manage output
             if self.ctx.model.suppress_output is True:
 
                 if "messages" in body and len(body["messages"]) > 0:
@@ -356,7 +407,6 @@ class Filter:
                         self.output_content + self.debug.emit()
                     )
 
-            # When suppress_output is False we append debug info if needed
             elif self.ctx.model.suppress_output is False:
 
                 if "messages" in body and len(body["messages"]) > 0:
