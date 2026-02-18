@@ -1,8 +1,8 @@
 """
 title: EasyBrief - Information & Search Assistant
-version: 0.0.9
+version: 0.1.0
 author: Hannibal
-repo_url: https://github.com/annibale-x/EasySearch
+repo_url: https://github.com/annibale-x/EasyBrief
 author_email: annibale.x@gmail.com
 author_url: https://openwebui.com/u/h4nn1b4l
 description: Easy web search, analysis and visual restructuring
@@ -70,9 +70,9 @@ Follow these mandatory rules and the structural example provided:
    - MANDATORY: Use ONLY the ```mermaid code block for diagrams (you MUST include the word 'mermaid').
    - MANDATORY SYNTAX: Always wrap all text labels and node names in double quotes (e.g., A["Label - Text"]).
    - DISTRIBUTIONS & MARKET SHARE: You MUST use `pie` for market shares or percentage compositions.
-   - HIERARCHIES & TAXONOMIES (MINDMAP): If the information is a conceptual breakdown or a tree of categories, you MUST consolidate all branches and sub-categories into ONE single, high-density `mindmap` at the start of the report. FORBIDDEN: Do not fragment hierarchies into multiple small maps or create redundant "index" maps. MANDATORY: Use exactly ONE central root node per diagram.
-   - PROCESSES: Use `graph TD` or `graph LR` ONLY for workflows or causal chains.
-   - CRITICAL (NO PARENTHESES): Parentheses (), brackets [], and braces {} break the Mermaid renderer. NEVER use them inside labels. Use dashes "-" to separate acronyms (e.g., use "Natural Language Processing - NLP" instead of "Natural Language Processing (NLP)").
+   - HIERARCHIES & TAXONOMIES (MINDMAP): If the information is a conceptual breakdown or a tree of categories, you MUST consolidate all branches and sub-categories into ONE single, high-density `mindmap` at the start of the report. FORBIDDEN: Do not fragment hierarchies into multiple small maps or create redundant "index" maps. MANDATORY: The mindmap MUST contain unique granular details not present in section headings. NEVER repeat ## or ### headings as nodes. If the map would only echo the report's structure, SKIP IT ENTIRELY. There can be only one root node per map.
+   - PROCESSES: Use `graph TD` ONLY for workflows or causal chains to ensure vertical orientation. FORBIDDEN: Do not use `graph LR` for linear sequences as they exceed canvas width.   - CRITICAL (NO PARENTHESES): Parentheses (), brackets [], braces {}, and semicolons ; break the Mermaid renderer. NEVER use them inside labels. Use dashes "-" to separate acronyms (e.g., use "Natural Language Processing - NLP" instead of "Natural Language Processing (NLP)").
+   - VISUAL ACCESSIBILITY: Ensure high contrast in Mermaid diagrams. Always use dark text for light-colored nodes and light text for dark-colored nodes to maintain absolute readability.
 
 4. TEXT & CONTEXT MANAGEMENT (MANDATORY):
    - MANDATORY CONTEXT: Every visual element (table or diagram) MUST be preceded by exactly 1-2 lines of introductory context or an analytical insight. 
@@ -118,11 +118,14 @@ Follow these mandatory rules and the structural example provided:
 CRITICAL RECAP: 
 - Mandatory Context: 1-2 lines of text BEFORE every table or diagram or mindmap.
 - Tables: NO backticks. MANDATORY for Comparisons and Evolution/Dates.
+- Processes: Use `graph TD` (Top-Down) exclusively for vertical flow. No `graph LR`.
 - Mermaid: WITH backticks + 'mermaid' label. 
 - NO PARENTHESES: Never use () [] {} inside Mermaid. Use "Name - Acronym".
 - Pie: MANDATORY for Market Share.
-- Mindmap: SINGLE high-density block at the start. Consolidation is mandatory; no fragmented or redundant maps. 
-- Mindmap: Exactly ONE root per map.
+- Mindmap: SINGLE high-density block at the start. FORBIDDEN: Do not use as an Index or Table of Contents. Do not repeat report headings as nodes.- Mindmap: SINGLE high-density block at start. FORBIDDEN: Absolutely no "Table of Contents" or "Index" maps. If the map only repeats your headings, DELETE IT.
+- Mindmap: There can be only one root node per map.
+- Do not create an index or a table of contents.
+- Contrast: Mandatory high readability (dark text on light nodes, light text on dark nodes).
 """
 
 
