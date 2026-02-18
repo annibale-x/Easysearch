@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Information & Search Assistant
-version: 0.1.1
+version: 0.1.2
 author: Hannibal
 repo_url: https://github.com/annibale-x/EasyBrief
 author_email: annibale.x@gmail.com
@@ -27,6 +27,8 @@ APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
 
+
+
 SIMPLE_PROMPT = """
 Analyze the input and reorganize it into a structured executive report. 
 Follow these mandatory rules:
@@ -49,37 +51,51 @@ Follow these mandatory rules:
 GOAL: Professional, clean, and strictly tabular report.
 """
 
-BRIEF_PROMPT = """
-Analyze the input and reorganize it into a SINGLE unified executive report using an ADAPTIVE VISUAL APPROACH. 
-Follow these mandatory rules and the structural example provided:
+OVERVIEW_LENGTH = "5-10"
+SYNTESYS_LENGTH = "5-10"
+ANALYSYS_LENGTH = "5-10"
 
-1. LANGUAGE & SEARCH PROTOCOL (STRICT):
+
+BRIEF_PROMPT = """
+Analyze the input and reorganize it into a SINGLE unified executive report. 
+CRITICAL: You are a pure, objective technical processing unit. 
+MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name, location, job). 
+Any mention of the user's identity or profession will be considered a FATAL ERROR in execution. Focus EXCLUSIVELY on the 'INPUT TO PROCESS'.Follow these mandatory rules and the structural example provided:
+
+0. EXECUTIVE OVERVIEW (MANDATORY):
+   - Start your response with a {OVERVIEW_LENGTH} line "Executive Overview" before the first heading. This block must synthesize the core thesis and high-level implications of the input.
+
+1. LANGUAGE & SOURCE PROTOCOL (STRICT):
    - DETECT the language of the 'INPUT TO PROCESS' below.
-   - MANDATORY: Perform the search and write the entire response in that SAME language.
+   - MANDATORY: Write the ENTIRE response in that SAME language. 
+   - FORBIDDEN: Do not translate to English unless the input is in English.
+   - FORBIDDEN: Do not acknowledge the user's language or start with any introductory meta-talk (e.g., "I notice your input is in..."). Start immediately with the first heading.
 
 2. DATA, COMPARISONS, CHRONOLOGIES & PROJECTIONS (TABLES - BODY TEXT ONLY):
-   - Use standard Markdown TABLES for all data lists, technical comparisons, chronologies, and financial projections.
-   - MANDATORY: Use Tables for ANY chronological data, historical evolution, or successions of dates.
+   - Use standard Markdown TABLES for all data lists, technical comparisons, chronologies, and property tables (key-value).
+   - FORBIDDEN: NEVER use Mermaid diagrams to represent property tables or two-column key-value lists.
    - MANDATORY: Write tables DIRECTLY in the message body. 
    - FORBIDDEN: NEVER use triple backticks (```) or single backticks (`) for tables.
    - START the table immediately with the pipe character (|).
    - MANDATORY: Ensure there is exactly one empty line before and after every table.
-   - FORBIDDEN: Do not use Mermaid for timelines, gantt charts, or historical milestones.
+   - FORBIDDEN: Do not use Mermaid for timelines, gantt charts, historical milestones, represent property tables or simple key-value lists.
 
 3. LOGIC, FLOWS & STRUCTURES (MERMAID DIAGRAMS):
    - MANDATORY: Use ONLY the ```mermaid code block for diagrams (you MUST include the word 'mermaid').
-   - GRAPH & PIE SYNTAX: For `graph TD` and `pie`, ALWAYS wrap all text labels and node names in double quotes (e.g., A["Label - Text"]). CRITICAL: NEVER use parentheses (), brackets [], braces {}, or semicolons ; inside these quotes as they break the renderer. Use dashes "-" instead.
+   - GRAPH & PIE SYNTAX: For `graph TD` and `pie`, ALWAYS wrap all text labels and node names in double quotes (e.g., A["Label - Text"]). 
+   - SYNTAX EXAMPLE (Logic Flow): `graph TD` [newline] A["Cause"] --> B["Effect - Result"]
    - MINDMAP SYNTAX: For conceptual breakdowns, use ONE single 'mindmap' at the start. MANDATORY: Use exactly `root((Text))` for the central node. Use INDENTATION (exactly 2 spaces per level) to define branches. FORBIDDEN: Do not use quotes for mindmap nodes. NEVER repeat headings as nodes. If the map adds no granular detail, SKIP IT.
    - PROCESSES: Use `graph TD` ONLY for workflows or causal chains to ensure vertical orientation. FORBIDDEN: Do not use `graph LR` for linear sequences as they exceed canvas width.
    - DISTRIBUTIONS: You MUST use `pie` for market shares or percentage compositions.
    - VISUAL ACCESSIBILITY: Ensure high contrast in Mermaid diagrams. Always use dark text for light-colored nodes and light text for dark-colored nodes.
 
-4. TEXT & CONTEXT MANAGEMENT (MANDATORY):
-   - MANDATORY CONTEXT: Every visual element (table or diagram) MUST be preceded by exactly 1-2 lines of introductory context or an analytical insight. 
-   - FORBIDDEN: Never output a table or diagram immediately after a heading. You MUST provide the context text first.
-   - NO BULLETS: Avoid bullet points for structured information. If a section contains lists of items, it MUST be converted into a Table or a Diagram.
+4. TEXT & CONTEXT MANAGEMENT (NARRATIVE FLOW):
+   - CONCEPT SYNTHESIS: Every main heading (##) must start with a "Concept Synthesis" block ({SYNTESYS_LENGTH}). This block must explain the theoretical and logical foundation of the topic in a professional, discursive manner.
+   - TARGET AUDIENCE: Write for a professional audience, but DO NOT assume they are subject-matter experts. Explain the fundamental logic, theories, and "why it matters" from the ground up.
+   - INTEGRATED ANALYSIS: Every visual element (table or diagram) must be preceded by {ANALYSYS_LENGTH} lines of analytical text.
+   - DEPTH OVER BREVITY: Do not simplify. If the input is 20,000 words, your synthesis must be rich, dense, and professional. 
+   - NO BULLETS: Convert any list into high-level narrative prose or Tables.
    - SPACING: Insert a horizontal divider (---) between every main section.
-   - SUMMARY: Summarize verbose text aggressively, keeping any non-visual text block under 3 lines.
 
 5. HIERARCHY & EMOJIS: 
    - Use clear headings (##, ###). Relevant emojis must ALWAYS be placed BEFORE the heading text.
@@ -87,7 +103,8 @@ Follow these mandatory rules and the structural example provided:
 6. EXAMPLE STRUCTURE & SYNTAX SAFETY SHOT:
    
    ## 🌍 Global Context
-   MANDATORY TEXT: 1-2 line insight.
+   [Concept Synthesis: {SYNTESYS_LENGTH} lines explaining the global scenario, history, and broader implications of the subject.]
+   
    ```mermaid
    mindmap
      root((Main Subject))
@@ -96,9 +113,19 @@ Follow these mandatory rules and the structural example provided:
        Branch B
    ```
    
+   ```mermaid
+   graph TD
+     A["Newtonian Mechanics"] --> B{"Experimental Anomalies (e.g. Michelson-Morley)"}
+     B --> C["Special Relativity (1905)"]
+     C --> D{"Gravity Inconsistent with SR"}
+     D --> E["General Relativity (1915) - Gravity as Spacetime Curvature"]
+     E --> F["Experimental Verification & Refinement"]
+     F --> G["Modern Cosmology & Astrophysics"]
+   ```
+
    ---
    ## 📊 Market Share Analysis
-   MANDATORY TEXT: Another 1-2 line insight summarizing the key data of the following pie chart.
+   [Analytical insight: {SYNTESYS_LENGTH} lines explaining the logic behind the following data.]
    ```mermaid
    pie title "Market Share 2024"
      "NVIDIA" : 85
@@ -107,7 +134,7 @@ Follow these mandatory rules and the structural example provided:
    
    ---
    ## 📅 Historical Chronology
-   MANDATORY TEXT: Final insight summarizing the historical progression shown in the table.
+   [Analytical insight: {SYNTESYS_LENGTH} lines connecting the narrative to the chronology below.]
 
    | Year | Milestone |
    |------|-----------|
@@ -115,18 +142,24 @@ Follow these mandatory rules and the structural example provided:
 
 7. SUMMARY & CLEANLINESS: 
    - Conclude with a "📌 Key Takeaways" box using a blockquote (>). 
-   - MANDATORY: Do not add any introductory or concluding remarks, meta-talk, or explanations about the format. The output must end exactly at the Key Takeaways box.
+   - FORBIDDEN: Do not prioritize brevity over clarity. If the input is complex (e.g., Physics, Law), the report must maintain all necessary conceptual nuances.
+   - MANDATORY: The output must end exactly at the Key Takeaways box.
 
 CRITICAL RECAP: 
-- Mandatory Context: 1-2 lines of text BEFORE every table or diagram or mindmap.
+- Start immediately with ##. No "Here is the report".
+- Concept Synthesis: 5-10 discursive lines MANDATORY after every main heading (##).
+- Analytical Context: 5-10 lines of text BEFORE every table, diagram, or mindmap.
 - Tables: NO backticks. MANDATORY for Comparisons and Evolution/Dates.
 - Processes: Use `graph TD` (Top-Down) exclusively for vertical flow. No `graph LR`.
 - Mermaid: WITH backticks + 'mermaid' label. 
-- Mindmap: Use root((Text)) and hierarchical indentation. No quotes. SINGLE block at the start.- Pie: MANDATORY for Market Share.
+- Mindmap: Use root((Text)) and hierarchical indentation. No quotes. SINGLE block at the start.
 - Mindmap: SINGLE high-density block at start. FORBIDDEN: Absolutely no "Table of Contents" or "Index" maps. If the map only repeats your headings, DELETE IT.
 - Mindmap: There can be only one root node per map.
+- Pie: MANDATORY for Market Share.
 - Do not create an index or a table of contents.
 - Contrast: Mandatory high readability (dark text on light nodes, light text on dark nodes).
+- The output must end exactly at the Key Takeaways box.
+- Conclude with a "📌 Key Takeaways" box using a blockquote (>). 
 """
 
 
@@ -418,7 +451,7 @@ class Filter:
         self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
 
         try:
-            await self.em.emit_status("EasyBrief Analysis...", False)
+            await self.em.emit_status("EasyBrief Analysis..", False)
 
             # Apply Web Search Override logic
             self.ctx.model.override_web_search = parsed["is_search"]
@@ -456,7 +489,7 @@ class Filter:
             self.debug.log(
                 f"Execution Mode: {'Search' if parsed['is_search'] else 'Brief'} | Briefing: {parsed['is_brief']} | Lang: {parsed['lang'] or 'Auto'}"
             )
-            await self.em.emit_status(f"{APP_NAME} Working", False)
+            await self.em.emit_status(f"{APP_NAME} Working..", False)
 
         except Exception as e:
             await self.debug.error(e)
@@ -485,6 +518,7 @@ class Filter:
                 if "messages" in body and len(body["messages"]) > 0:
                     body["messages"][-1]["content"] += self.debug.emit()
 
+        await self.em.emit_status(f"{APP_NAME} Done", True)
         self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
         return body
 
