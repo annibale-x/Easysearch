@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Information & Search Assistant
-version: 0.1.5
+version: 0.1.6
 author: Hannibal
 repo_url: https://github.com/annibale-x/EasyBrief
 author_email: annibale.x@gmail.com
@@ -315,11 +315,23 @@ class Filter:
 
     class Valves(BaseModel):
         debug: bool = Field(default=False)
-        trigger_keyword: str = Field(
-            default="??", description="Trigger for Web Search + Analysis."
+        search_trigger: str = Field(
+            default="??",
+            description="Trigger for Web Search only (exactly 2 chars, e.g. '?? query').",
+            min_length=2,
+            max_length=2,
         )
-        brief_trigger_keyword: str = Field(
-            default="!!", description="Trigger for Text Analysis/Restructuring."
+        brief_trigger: str = Field(
+            default=">>",
+            description="Trigger for Brief/Analysis only (exactly 2 chars, e.g. '>> text').",
+            min_length=2,
+            max_length=2,
+        )
+        search_and_brief_trigger: str = Field(
+            default="?>",
+            description="Trigger for Web Search + Brief Analysis (exactly 2 chars, e.g. '?> query').",
+            min_length=2,
+            max_length=2,
         )
 
     class UserValves(BaseModel):
@@ -339,27 +351,31 @@ class Filter:
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """Validate input and parse trigger, language, and content."""
 
-        s_trg = self.valves.trigger_keyword  # ??
-        b_trg = self.valves.brief_trigger_keyword  # !!
-        q_trg = "?"  # Quick Search
+        # Define trigger mapping with priorities
+        # Priority order matters if user customizes triggers to have prefix overlaps
+        triggers = [
+            (self.valves.search_and_brief_trigger, True, True),  # ?> (Search + Brief)
+            (self.valves.brief_trigger, False, True),  # >> (Brief Only)
+            (self.valves.search_trigger, True, False),  # ?? (Search Only)
+        ]
 
-        # Identify which trigger starts the text, checking longest first
-        active = None
+        active_trigger = None
+        is_search = False
+        is_brief = False
 
-        if txt.startswith(s_trg):
-            active = s_trg
+        # Identify which trigger starts the text
+        for trigger, search_flag, brief_flag in triggers:
+            if txt.startswith(trigger):
+                active_trigger = trigger
+                is_search = search_flag
+                is_brief = brief_flag
+                break
 
-        elif txt.startswith(b_trg):
-            active = b_trg
-
-        elif txt.startswith(q_trg):
-            active = q_trg
-
-        if not active:
+        if not active_trigger:
             return None
 
         # Extract everything after the trigger
-        remainder = txt[len(active) :]
+        remainder = txt[len(active_trigger) :]
         lang = None
 
         # Check for :lang syntax (e.g. :it)
@@ -368,8 +384,8 @@ class Filter:
             remainder = remainder[3:]
 
         return {
-            "is_search": active in [s_trg, q_trg],
-            "is_brief": active in [s_trg, b_trg],
+            "is_search": is_search,
+            "is_brief": is_brief,
             "lang": lang,
             "content": remainder.strip(),
         }
