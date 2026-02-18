@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Information & Search Assistant
-version: 0.0.7
+version: 0.0.8
 author: Hannibal
 repo_url: https://github.com/annibale-x/EasySearch
 author_email: annibale.x@gmail.com
@@ -29,48 +29,76 @@ SUPPRESS_OUTPUT = False
 
 BRIEF_PROMPT = """
 Analyze the input and reorganize it into a SINGLE unified executive report using an ADAPTIVE VISUAL APPROACH. 
-Break down the information into logical sections. For each section, provide a brief (max 2 lines) introductory context followed by the most suitable visual representation:
+Follow these mandatory rules and the structural example provided:
 
 1. LANGUAGE & SEARCH PROTOCOL (STRICT):
    - DETECT the language of the 'INPUT TO PROCESS' below.
-   - MANDATORY: You MUST perform the web search and write the entire response in that SAME language.
+   - MANDATORY: Perform the search and write the entire response in that SAME language.
 
 2. DATA, COMPARISONS, CHRONOLOGIES & PROJECTIONS (TABLES - BODY TEXT ONLY):
    - Use standard Markdown TABLES for all data lists, technical comparisons, chronologies, and financial projections.
+   - MANDATORY: Use Tables for ANY chronological data, historical evolution, or successions of dates.
    - MANDATORY: Write tables DIRECTLY in the message body. 
    - FORBIDDEN: NEVER use triple backticks (```) or single backticks (`) for tables.
-   - FORBIDDEN: NEVER use the word "markdown" to label tables.
    - START the table immediately with the pipe character (|).
    - MANDATORY: Ensure there is exactly one empty line before and after every table.
-   - FORBIDDEN: Do not use Mermaid for timelines, gantt charts, or numerical projections.
+   - FORBIDDEN: Do not use Mermaid for timelines, gantt charts, or historical milestones.
 
 3. LOGIC, FLOWS & STRUCTURES (MERMAID DIAGRAMS):
-   - MANDATORY: Use ONLY the ```mermaid code block for diagrams (you MUST include the word 'mermaid' after the first three backticks).
-   - MANDATORY SYNTAX: Always wrap all text labels and node names in double quotes (e.g., A["Label (Text)"]).
-   - PROCESSES: Use `graph TD` or `graph LR` for workflows.
-   - INTERACTIONS: Use `sequenceDiagram` for communication between actors.
-   - DISTRIBUTIONS: Use `pie` for market shares.
-   - HIERARCHIES: Use `mindmap` or `graph TD` for breakdowns.
-   - FORBIDDEN: Never use `timeline` or `gantt` keywords.
+   - MANDATORY: Use ONLY the ```mermaid code block for diagrams (you MUST include the word 'mermaid').
+   - MANDATORY SYNTAX: Always wrap all text labels and node names in double quotes (e.g., A["Label - Text"]).
+   - DISTRIBUTIONS & MARKET SHARE: You MUST use `pie` for market shares or percentage compositions.
+   - HIERARCHIES & TAXONOMIES: If the information is a conceptual breakdown or a tree of categories, you MUST use `mindmap`.
+   - PROCESSES: Use `graph TD` or `graph LR` ONLY for workflows or causal chains.
+  - CRITICAL (NO PARENTHESES): Parentheses (), brackets [], and braces {} break the Mermaid renderer. NEVER use them inside labels. Use dashes "-" to separate acronyms (e.g., use "Natural Language Processing - NLP" instead of "Natural Language Processing (NLP)").
 
-4. TEXT & CONTEXT MANAGEMENT:
-   - BALANCED APPROACH: Every visual element MUST be preceded by a concise 1-2 line explanation or insight that summarizes the data shown.
-   - NO BULLET WALLS: If a list has >5 items, it MUST be converted into a Table or Diagram.
-   - SPACING: Insert a horizontal divider (---) between every main section to improve readability.
+4. TEXT & CONTEXT MANAGEMENT (MANDATORY):
+   - MANDATORY CONTEXT: Every visual element (table or diagram) MUST be preceded by exactly 1-2 lines of introductory context or an analytical insight. 
+   - FORBIDDEN: Never output a table or diagram immediately after a heading. You MUST provide the context text first.
+   - NO BULLETS: Avoid bullet points for structured information. If a section contains lists of items, it MUST be converted into a Table or a Diagram.
+   - SPACING: Insert a horizontal divider (---) between every main section.
    - SUMMARY: Summarize verbose text aggressively, keeping any non-visual text block under 3 lines.
 
 5. HIERARCHY & EMOJIS: 
-   - Use clear headings (##, ###).
-   - MANDATORY: Relevant emojis must ALWAYS be placed BEFORE the heading or category text.
+   - Use clear headings (##, ###). Relevant emojis must ALWAYS be placed BEFORE the heading text.
 
-6. SUMMARY & CLEANLINESS: 
+6. EXAMPLE STRUCTURE & SYNTAX SAFETY SHOT:
+   
+   ## 🌍 Global Context
+   MANDATORY TEXT: This is the 1-2 line insight that MUST precede every visual element.
+   ```mermaid
+   mindmap
+     root(Main Subject)
+       "Branch A - Acronym"
+   ```
+   
+   ---
+   ## 📊 Market Share Analysis
+   MANDATORY TEXT: Another 1-2 line insight summarizing the key data of the following pie chart.
+   ```mermaid
+   pie title "Market Share 2024"
+     "NVIDIA" : 85
+     "Others" : 15
+   ```
+   
+   ---
+   ## 📅 Historical Chronology
+   MANDATORY TEXT: Final insight summarizing the historical progression shown in the table.
+
+   | Year | Milestone |
+   |------|-----------|
+   | 2024 | Current   |
+
+7. SUMMARY & CLEANLINESS: 
    - Conclude with a "📌 Key Takeaways" box using a blockquote (>). 
    - MANDATORY: Do not add any introductory or concluding remarks, meta-talk, or explanations about the format. The output must end exactly at the Key Takeaways box.
 
 CRITICAL RECAP: 
-- Tables: NO backticks, NO code blocks.
-- Mermaid: YES backticks, YES 'mermaid' label.
-- Goal: Professional executive summary.
+- Mandatory Context: 1-2 lines of text BEFORE every table or diagram.
+- Tables: NO backticks. MANDATORY for Comparisons and Evolution/Dates.
+- Mermaid: WITH backticks + 'mermaid' label. 
+- NO PARENTHESES: Never use () [] {} inside Mermaid. Use "Name - Acronym".
+- Pie: MANDATORY for Market Share.
 """
 
 
@@ -391,11 +419,6 @@ class Filter:
         """Process the outgoing response and restore web search state."""
 
         if self.ctx and self.ctx.model.executed:
-
-            if "messages" in body and len(body["messages"]) > 0:
-                self.ctx.model.raw_assistant_response = body["messages"][-1].get(
-                    "content", ""
-                )
 
             if "features" in body:
                 body["features"]["web_search"] = self.ctx.model.web_search_original
