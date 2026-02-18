@@ -1,11 +1,11 @@
 """
-title: EasyBrief - Information & Search Assistant
+title: EasyBrief - Web Search & Executive Summaries
 version: 0.1.6
 author: Hannibal
-repo_url: https://github.com/annibale-x/EasyBrief
+https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
 author_url: https://openwebui.com/u/h4nn1b4l
-description: Easy web search, analysis and visual restructuring
+description: Transform text and web search results into structured Executive Reports with tables and mindmaps using simple triggers (??, >>, ?>).
 """
 
 import json
@@ -15,18 +15,21 @@ import sys
 import httpx  # type: ignore
 from typing import Optional, Any, List, Dict, Tuple, Union
 from pydantic import BaseModel, Field
-
-# --- SURGICAL IMPORTS ---
 from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
 
 # --- CONSTANTS ---
+
 APP_ICON = "✨"
 APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
+MIN_BRIEF_WORDS = 15  # Minimum word count to trigger a Report
 
+OVERVIEW_LENGTH = "50-150 words"
+SYNTESYS_LENGTH = "50-100 words"
+ANALYSYS_LENGTH = "max 50 words"
 
 SIMPLE_PROMPT = """
 Analyze the input and reorganize it into a structured executive report. 
@@ -49,11 +52,6 @@ Follow these mandatory rules:
 
 GOAL: Professional, clean, and strictly tabular report.
 """
-
-OVERVIEW_LENGTH = "50-150 words"
-SYNTESYS_LENGTH = "50-100 words"
-ANALYSYS_LENGTH = "max 50 words"
-MIN_BRIEF_WORDS = 15  # Minimum word count to trigger a Report
 
 BRIEF_PROMPT = """
 Analyze the input and reorganize it into a SINGLE unified executive report. 
