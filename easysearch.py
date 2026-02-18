@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Information & Search Assistant
-version: 0.0.8
+version: 0.0.9
 author: Hannibal
 repo_url: https://github.com/annibale-x/EasySearch
 author_email: annibale.x@gmail.com
@@ -27,6 +27,28 @@ APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
 
+SIMPLE_PROMPT = """
+Analyze the input and reorganize it into a structured executive report. 
+Follow these mandatory rules:
+
+1. DATA & COMPARISONS (TABLES):
+   - Use standard Markdown TABLES for all data lists, technical comparisons, chronologies, and projections.
+   - MANDATORY: Write tables DIRECTLY in the message body. No backticks.
+   - FORBIDDEN: NEVER use Mermaid diagrams or any code-based visualization.
+
+2. TEXT & CONTEXT MANAGEMENT:
+   - Provide exactly 1-2 lines of introductory context before every table.
+   - NO BULLETS: Convert lists of items into Tables.
+   - SPACING: Insert a horizontal divider (---) between every main section.
+   - SUMMARY: Summarize verbose text aggressively, keeping any text block under 3 lines.
+
+3. SUMMARY & CLEANLINESS: 
+   - Conclude with a "📌 Key Takeaways" box using a blockquote (>). 
+   - MANDATORY: Do not add any introductory or concluding remarks or meta-talk. The output must end exactly at the Key Takeaways box.
+
+GOAL: Professional, clean, and strictly tabular report.
+"""
+
 BRIEF_PROMPT = """
 Analyze the input and reorganize it into a SINGLE unified executive report using an ADAPTIVE VISUAL APPROACH. 
 Follow these mandatory rules and the structural example provided:
@@ -48,9 +70,9 @@ Follow these mandatory rules and the structural example provided:
    - MANDATORY: Use ONLY the ```mermaid code block for diagrams (you MUST include the word 'mermaid').
    - MANDATORY SYNTAX: Always wrap all text labels and node names in double quotes (e.g., A["Label - Text"]).
    - DISTRIBUTIONS & MARKET SHARE: You MUST use `pie` for market shares or percentage compositions.
-   - HIERARCHIES & TAXONOMIES: If the information is a conceptual breakdown or a tree of categories, you MUST use `mindmap`.
+   - HIERARCHIES & TAXONOMIES (MINDMAP): If the information is a conceptual breakdown or a tree of categories, you MUST consolidate all branches and sub-categories into ONE single, high-density `mindmap` at the start of the report. FORBIDDEN: Do not fragment hierarchies into multiple small maps or create redundant "index" maps. MANDATORY: Use exactly ONE central root node per diagram.
    - PROCESSES: Use `graph TD` or `graph LR` ONLY for workflows or causal chains.
-  - CRITICAL (NO PARENTHESES): Parentheses (), brackets [], and braces {} break the Mermaid renderer. NEVER use them inside labels. Use dashes "-" to separate acronyms (e.g., use "Natural Language Processing - NLP" instead of "Natural Language Processing (NLP)").
+   - CRITICAL (NO PARENTHESES): Parentheses (), brackets [], and braces {} break the Mermaid renderer. NEVER use them inside labels. Use dashes "-" to separate acronyms (e.g., use "Natural Language Processing - NLP" instead of "Natural Language Processing (NLP)").
 
 4. TEXT & CONTEXT MANAGEMENT (MANDATORY):
    - MANDATORY CONTEXT: Every visual element (table or diagram) MUST be preceded by exactly 1-2 lines of introductory context or an analytical insight. 
@@ -94,11 +116,13 @@ Follow these mandatory rules and the structural example provided:
    - MANDATORY: Do not add any introductory or concluding remarks, meta-talk, or explanations about the format. The output must end exactly at the Key Takeaways box.
 
 CRITICAL RECAP: 
-- Mandatory Context: 1-2 lines of text BEFORE every table or diagram.
+- Mandatory Context: 1-2 lines of text BEFORE every table or diagram or mindmap.
 - Tables: NO backticks. MANDATORY for Comparisons and Evolution/Dates.
 - Mermaid: WITH backticks + 'mermaid' label. 
 - NO PARENTHESES: Never use () [] {} inside Mermaid. Use "Name - Acronym".
 - Pie: MANDATORY for Market Share.
+- Mindmap: SINGLE high-density block at the start. Consolidation is mandatory; no fragmented or redundant maps. 
+- Mindmap: Exactly ONE root per map.
 """
 
 
@@ -280,6 +304,10 @@ class Filter:
         )
 
     class UserValves(BaseModel):
+        rich_output: bool = Field(
+            default=True,
+            description="Enable Mermaid diagrams and advanced visual layout.",
+        )
         debug: bool = Field(default=False)
 
     def __init__(self):
@@ -292,15 +320,21 @@ class Filter:
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """Validate input and parse trigger, language, and content."""
 
-        s_trg = self.valves.trigger_keyword
-        b_trg = self.valves.brief_trigger_keyword
+        s_trg = self.valves.trigger_keyword  # ??
+        b_trg = self.valves.brief_trigger_keyword  # !!
+        q_trg = "?"  # Quick Search
 
-        # Check which trigger starts the text
-        active = (
-            s_trg
-            if txt.startswith(s_trg)
-            else (b_trg if txt.startswith(b_trg) else None)
-        )
+        # Identify which trigger starts the text, checking longest first
+        active = None
+
+        if txt.startswith(s_trg):
+            active = s_trg
+
+        elif txt.startswith(b_trg):
+            active = b_trg
+
+        elif txt.startswith(q_trg):
+            active = q_trg
 
         if not active:
             return None
@@ -315,7 +349,8 @@ class Filter:
             remainder = remainder[3:]
 
         return {
-            "is_search": active == s_trg,
+            "is_search": active in [s_trg, q_trg],
+            "is_brief": active in [s_trg, b_trg],
             "lang": lang,
             "content": remainder.strip(),
         }
@@ -391,8 +426,19 @@ class Filter:
                 else "DETECT and match the input language."
             )
 
-            # Inject the Briefing System Prompt
-            instr = f"{BRIEF_PROMPT}\n\n{lang_instr}\n\nINPUT TO PROCESS:\n{content}"
+            # Decision Logic: Quick Search vs Briefing
+            if parsed["is_brief"]:
+                selected_prompt = (
+                    BRIEF_PROMPT if self.user_valves.rich_output else SIMPLE_PROMPT
+                )
+                instr = (
+                    f"{selected_prompt}\n\n{lang_instr}\n\nINPUT TO PROCESS:\n{content}"
+                )
+
+            else:
+                # Trigger '?' (Quick Search) mode: skip mega-instructions
+                instr = f"{lang_instr}\n\nINPUT TO PROCESS:\n{content}"
+
             body["messages"][-1]["content"] = instr
 
             if self.ctx.model.override_web_search is not None:
@@ -404,7 +450,7 @@ class Filter:
 
             self.ctx.model.executed = True
             self.debug.log(
-                f"Execution Mode: {'Search' if parsed['is_search'] else 'Brief'} | Lang: {parsed['lang'] or 'Auto'}"
+                f"Execution Mode: {'Search' if parsed['is_search'] else 'Brief'} | Briefing: {parsed['is_brief']} | Lang: {parsed['lang'] or 'Auto'}"
             )
             await self.em.emit_status(f"{APP_NAME} Working", False)
 
