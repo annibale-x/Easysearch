@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.1.6
+version: 0.1.7
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -42,7 +42,7 @@ Follow these mandatory rules:
 
 2. TEXT & CONTEXT MANAGEMENT:
    - Provide exactly 1-2 lines of introductory context before every table.
-   - NO BULLETS: Convert lists of items into Tables.
+   - NO BULLET LISTS: Convert lists of items into Tables.
    - SPACING: Insert a horizontal divider (---) between every main section.
    - SUMMARY: Summarize verbose text aggressively, keeping any text block under 3 lines.
 
@@ -66,30 +66,41 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    - ZERO PREAMBLE: Start immediately with the first content block. No intro meta-talk. 
 
 2. STRUCTURE & TEMPLATE ARCHITECTURE:
-   Your report MUST strictly follow this hierarchical sequence:
-   - BLOCK 0: Executive Overview ({OVERVIEW_LENGTH}) before any heading. Synthesize core thesis and implications.
-   - MINDMAP (Optional): If needed, ONE single mindmap block at the start. Syntax: `root((Central Topic))` and 2-space indentation. No quotes for mindmap nodes. FORBIDDEN: Do not use mindmaps as a Table of Contents.
-   - BLOCK 1..N (Macro-topics):
+   Your report MUST strictly follow this hierarchical sequence (DO NOT print "BLOCK" labels):
+   - [BLOCK 0] Executive Overview ({OVERVIEW_LENGTH}) before any heading. Synthesize core thesis and implications.
+   - [BLOCK 0.5] Structural Visual: MANDATORY if the topic is hierarchical. Insert a MERMAID CODE BLOCK (```mermaid) containing a `mindmap` OR `graph TD`.
+   - [BLOCK 1..N] Macro-topics:
      - ## Heading (preceded by emoji).
-     - Concept Synthesis ({SYNTESYS_LENGTH}): Professional narrative explaining foundational logic and "why it matters".
-     - [Optional Data Block]: Analytical Context ({ANALYSYS_LENGTH}) followed by its Visual Element (Table or Mermaid).
-   - FINAL BLOCK: 📌 Key Takeaways (blockquote >).
+     - Concept Synthesis ({SYNTESYS_LENGTH}): Professional narrative explaining foundational logic. FORBIDDEN: Do NOT use bullet points here.
+     - [Optional Data Block]: Analytical Context ({ANALYSYS_LENGTH}) followed by its Visual Element (Table, Pie Chart, or Graph).
+   - [FINAL BLOCK] 📌 Key Takeaways (blockquote >).
 
 3. VISUAL ELEMENT RULES:
    - TABLES: Standard Markdown body text only. NO backticks. Start immediately with the pipe (|). MANDATORY: Exactly one empty line before and after every table.
-   - MERMAID GRAPH: Use `graph TD` exclusively (no `graph LR`). Use ONLY square brackets `[ ]` for nodes. ALWAYS wrap text in double quotes: A["Text"]. CRITICAL: No (), [], {{}}, or ; inside quotes.
+   - MERMAID GRAPH: MANDATORY: Wrap code in triple backticks (```mermaid). Use `graph TD` exclusively. Use ONLY square brackets `["Text"]` for nodes. ALWAYS wrap text in double quotes.
    - MERMAID PIE: MANDATORY for market shares or percentage distributions. Wrap labels in double quotes.
    - VISUAL ACCESSIBILITY: Ensure high contrast (dark text on light nodes, light text on dark nodes).
    - NARRATIVE PRIORITY: Every visual element MUST be preceded by its own Analytical Context block.
-
+   - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN. Convert simple lists into TABLES. For multi-level/nested lists, YOU MUST split them into specific Sub-headings (###) containing their own dedicated Tables.
 
 4. MERMAID VALID SYNTAX
 
+```mermaid
+graph TD
+    A["Main System"] --> B["Subsystem 1"]
+    A --> C["Subsystem 2"]
+    B --> D["Leaf Component"]
+```
 
 ```mermaid
 graph TD
-    A["Mass/Energy"] --> B["Spacetime Curvature"]
-    B --> C["Object Motion (Geodesics)"]
+    A["Human Nervous System"] 
+        -->|CNS| B["Brain"]
+        -->|CNS| E["Spinal Cord"]
+        -->|PNS| F["Somatic Nervous System"]
+        -->|PNS| G["Autonomic Nervous System"]
+    B --> D["Sympathetic Nervous System"]
+    B --> E["Parasympathetic Nervous System"]
 ```
 
 ```mermaid
@@ -106,17 +117,15 @@ mindmap
 A dense {OVERVIEW_LENGTH} words summary.
 
 ```mermaid
-mindmap
-  root((Main Subject))
-    Logical Branch
-      Sub-detail
+graph TD
+    A["Main Concept"] --> B["Component"]
 ```
 
 ---
 ## ⚙️ Foundational Logic
 
 **Concept Synthesis**: 
-{SYNTESYS_LENGTH} words block.
+{SYNTESYS_LENGTH} words block. Do NOT use bullet points here. Write a cohesive narrative.
 
 **Analytical Insight**: 
 {ANALYSYS_LENGTH} words block.
@@ -131,15 +140,15 @@ Concise summary points (bullet list).
 
 
 CRITICAL RECAP: 
-- BLOCK 0: Must be {OVERVIEW_LENGTH} introduction before headings.
-- Flow: Heading -> Synthesis (Must be {SYNTESYS_LENGTH}) -> Analysis (Must be {ANALYSYS_LENGTH}) -> Visual.
+- Flow: Overview -> Visual -> Heading -> Synthesis (Must be {SYNTESYS_LENGTH}, NO BULLETS) -> Analysis -> Table/Graph.
 - Respond ONLY in the input language (No English translation).
-- Mermaid: Square nodes [ ] only. Double quotes " " required. No ( ) or {{ }}.
+- Mermaid: Square nodes `["Text"]` only. Double quotes required.
 - Mindmap: root((Text)) and 2-space indentation. No quotes.
 - Tables: NO backticks. Pipe (|) start. One empty line before/after.
-- Clarity and Depth over Brevity: Do not skip complex logical explanations.
 - The output must end exactly at the Key Takeaways box.
+- No bullets: Convert lists of items into Tables.
 - Use 🎯 as emoji in the overview.
+- Use 📌 as emoji in the Key Takeaways.
 """
 
 
@@ -154,8 +163,9 @@ class ConfigService:
         self.start_time = time.time()
         self.model = Store(
             {
-                "trigger": ctx.valves.trigger_keyword,
-                "brief_trigger": ctx.valves.brief_trigger_keyword,
+                "search_trigger": ctx.valves.search_trigger,
+                "brief_trigger": ctx.valves.brief_trigger,
+                "search_and_brief_trigger": ctx.valves.search_and_brief_trigger,
                 "debug": ctx.valves.debug or ctx.user_valves.debug,
                 "user_query": "",
                 "id": "",
@@ -286,6 +296,10 @@ class DebugService:
     def emit(self):
         """Generate a Markdown-formatted debug dump for the UI."""
 
+        # UI Debug is strictly User-controlled to prevent visual pollution
+        if not self.ctx.user_valves.debug:
+            return ""
+
         def _s(d):
             return {
                 k: (
@@ -348,6 +362,15 @@ class Filter:
 
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """Validate input and parse trigger, language, and content."""
+
+        # Normalize "Smart Punctuation" (iOS/macOS/Android) to ASCII triggers
+        # We only replace the FIRST occurrence to avoid altering the message content
+        smart_map = {"»": ">>", "«": "<<", "—": "--", "–": "--", "→": "->", "←": "<-"}
+
+        for smart, ascii_val in smart_map.items():
+            if txt.startswith(smart):
+                txt = txt.replace(smart, ascii_val, 1)
+                break
 
         # Define trigger mapping with priorities
         # Priority order matters if user customizes triggers to have prefix overlaps
