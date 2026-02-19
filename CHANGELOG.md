@@ -1,3 +1,5 @@
+* **2026-02-19**: v0.2.1 - costants moved to user valves, add task model management (Hannibal)   
+
 * **2026-02-19**: v0.1.7 - prompt tuning for small models (Hannibal)   
 
 * **2026-02-19**: v0.1.6 - add valves search, brief and search and brief triggers (Hannibal)   

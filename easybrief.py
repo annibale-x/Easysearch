@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.1.7
+version: 0.2.1
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -26,10 +26,6 @@ APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
 MIN_BRIEF_WORDS = 15  # Minimum word count to trigger a Report
-
-OVERVIEW_LENGTH = "50-150 words"
-SYNTESYS_LENGTH = "50-100 words"
-ANALYSYS_LENGTH = "max 50 words"
 
 SIMPLE_PROMPT = """
 Analyze the input and reorganize it into a structured executive report. 
@@ -68,7 +64,7 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
 2. STRUCTURE & TEMPLATE ARCHITECTURE:
    Your report MUST strictly follow this hierarchical sequence (DO NOT print "BLOCK" labels):
    - [BLOCK 0] Executive Overview ({OVERVIEW_LENGTH}) before any heading. Synthesize core thesis and implications.
-   - [BLOCK 0.5] Structural Visual: MANDATORY if the topic is hierarchical. Insert a MERMAID CODE BLOCK (```mermaid) containing a `mindmap` OR `graph TD`.
+   - [BLOCK 0.5] Structural Visual: CONDITIONAL. Insert a MERMAID CODE BLOCK (```mermaid) containing a `mindmap` OR `graph TD` ONLY IF the topic involves complex structural relationships (systems, taxonomies). OMIT this block for simple rankings, flat lists, or linear chronologies.
    - [BLOCK 1..N] Macro-topics:
      - ## Heading (preceded by emoji).
      - Concept Synthesis ({SYNTESYS_LENGTH}): Professional narrative explaining foundational logic. FORBIDDEN: Do NOT use bullet points here.
@@ -82,6 +78,7 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    - VISUAL ACCESSIBILITY: Ensure high contrast (dark text on light nodes, light text on dark nodes).
    - NARRATIVE PRIORITY: Every visual element MUST be preceded by its own Analytical Context block.
    - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN. Convert simple lists into TABLES. For multi-level/nested lists, YOU MUST split them into specific Sub-headings (###) containing their own dedicated Tables.
+
 
 4. MERMAID VALID SYNTAX
 
@@ -169,6 +166,7 @@ class ConfigService:
                 "debug": ctx.valves.debug or ctx.user_valves.debug,
                 "user_query": "",
                 "id": "",
+                "original_model": None,  # Added for task_model restoration
                 "executed": False,
                 "web_search_original": False,
                 "override_web_search": OVERRIDE_WEB_SEARCH,
@@ -327,6 +325,7 @@ class Filter:
 
     class Valves(BaseModel):
         debug: bool = Field(default=False)
+
         search_trigger: str = Field(
             default="??",
             description="Trigger for Web Search only (exactly 2 chars, e.g. '?? query').",
@@ -345,6 +344,18 @@ class Filter:
             min_length=2,
             max_length=2,
         )
+        overview_length: str = Field(
+            default="50-150 words",
+            description="Length constraint for Executive Overview.",
+        )
+        synthesis_length: str = Field(
+            default="50-100 words",
+            description="Length constraint for Concept Synthesis.",
+        )
+        analysis_length: str = Field(
+            default="max 50 words",
+            description="Length constraint for Analytical Context.",
+        )
 
     class UserValves(BaseModel):
         rich_output: bool = Field(
@@ -352,6 +363,23 @@ class Filter:
             description="Enable Mermaid diagrams and advanced visual layout.",
         )
         debug: bool = Field(default=False)
+        task_model: Optional[str] = Field(
+            default=None,
+            description="Specific model ID to use for Brief generation. Leaves current model if empty.",
+        )
+        overview_length: Optional[str] = Field(
+            default=None, description="Override Overview length."
+        )
+        synthesis_length: Optional[str] = Field(
+            default=None, description="Override Synthesis length."
+        )
+        analysis_length: Optional[str] = Field(
+            default=None, description="Override Analysis length."
+        )
+        min_brief_words: int = Field(
+            default=15,
+            description="Minimum word count to trigger a Brief report (prevents Briefs on greetings).",
+        )
 
     def __init__(self):
         """Initialize the Filter with default valves and state."""
@@ -469,6 +497,21 @@ class Filter:
             )
             self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
 
+        # Prevent hallucinated reports on greetings or short sentences
+        min_words = self.user_valves.min_brief_words
+
+        if parsed["is_brief"] and not parsed["is_search"] and len(content.split()) < min_words:
+            self.debug.log(
+                f"Skipping Brief: content too short ({len(content.split())} < {min_words} words)."
+            )
+            await self.em.emit_status("Input too short for Brief", True)
+
+            # Strip the trigger and let the model reply normally as a standard chat
+            if body["messages"]:
+                body["messages"][-1]["content"] = content
+
+            return body
+
         self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
 
         try:
@@ -486,16 +529,35 @@ class Filter:
 
             # Decision Logic: Quick Search vs Briefing
             if parsed["is_brief"]:
+
+                # Check if a specific task model is requested via UserValves
+                target_model = self.user_valves.task_model
+                current_model = body.get("model")
+
+                if target_model and target_model != current_model:
+                    self.debug.log(f"Swapping model: {current_model} -> {target_model}")
+                    self.ctx.model.original_model = current_model
+                    body["model"] = target_model
+
                 selected_prompt = (
                     BRIEF_PROMPT if self.user_valves.rich_output else SIMPLE_PROMPT
+                )
+
+                # Resolve lengths (UserValves > Valves)
+                ov_len = self.user_valves.overview_length or self.valves.overview_length
+                syn_len = (
+                    self.user_valves.synthesis_length or self.valves.synthesis_length
+                )
+                ana_len = (
+                    self.user_valves.analysis_length or self.valves.analysis_length
                 )
 
                 # Dynamic injection of length constraints
                 if self.user_valves.rich_output:
                     selected_prompt = (
-                        selected_prompt.replace("{OVERVIEW_LENGTH}", OVERVIEW_LENGTH)
-                        .replace("{SYNTESYS_LENGTH}", SYNTESYS_LENGTH)
-                        .replace("{ANALYSYS_LENGTH}", ANALYSYS_LENGTH)
+                        selected_prompt.replace("{OVERVIEW_LENGTH}", ov_len)
+                        .replace("{SYNTESYS_LENGTH}", syn_len)
+                        .replace("{ANALYSYS_LENGTH}", ana_len)
                     )
 
                 instr = (
@@ -540,6 +602,10 @@ class Filter:
         if self.ctx and self.ctx.model.executed:
 
             await self.em.emit_status(f"{APP_NAME} Done", True)
+
+            # Restore original model if it was swapped
+            if self.ctx.model.original_model:
+                body["model"] = self.ctx.model.original_model
 
             if "features" in body:
                 body["features"]["web_search"] = self.ctx.model.web_search_original
