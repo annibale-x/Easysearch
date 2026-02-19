@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.2.1
+version: 0.2.4
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -25,7 +25,30 @@ APP_ICON = "✨"
 APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
-MIN_BRIEF_WORDS = 15  # Minimum word count to trigger a Report
+
+EB_WATERMARK = "\u200b\u200b\u200b"  # Invisible watermark (3 Zero Width Spaces)
+
+NANO_PROMPT = """
+The input is an existing technical report. 
+TASK: Distill it into a 'Flash Brief' (max 200 words) for quick mobile reading.
+
+1. LANGUAGE PROTOCOL:
+   - PRIORITY: If a specific language is requested at the end of this prompt, YOU MUST OBEY IT.
+   - DEFAULT: Otherwise, DETECT the language of the input and respond in the SAME language.
+
+2. DESTRUCTIVE EDITING:
+   - IGNORE all visual syntax (Mermaid, Tables, Code blocks).
+   - IGNORE structural boilerplate (Intro, Methodology).
+
+3. OUTPUT FORMAT (Plain Text Only):
+   - 🎯 **Thesis** 
+     A single, dense paragraph with the core conclusion.
+   - ⚡ **Key Concepts** 
+     A simple bullet list (max 5 items) extracting key concepts.
+
+4. CONSTRAINT:
+   - NO introductory text. NO "Here is the summary". Start immediately with the Thesis.
+"""
 
 SIMPLE_PROMPT = """
 Analyze the input and reorganize it into a structured executive report. 
@@ -43,7 +66,7 @@ Follow these mandatory rules:
    - SUMMARY: Summarize verbose text aggressively, keeping any text block under 3 lines.
 
 3. SUMMARY & CLEANLINESS: 
-   - Conclude with a "📌 Key Takeaways" box using a blockquote (>). 
+   - Conclude with a **📌 Key Takeaways** box using a blockquote (>). 
    - MANDATORY: Do not add any introductory or concluding remarks or meta-talk. The output must end exactly at the Key Takeaways box.
 
 GOAL: Professional, clean, and strictly tabular report.
@@ -439,6 +462,39 @@ class Filter:
             "content": remainder.strip(),
         }
 
+    async def _extract_query(self, text: str, model: str, user_id: str) -> str:
+        """Helper to extract a search query using the LLM to fix 'No search query' errors."""
+        try:
+            user = Users.get_user_by_id(user_id)
+            if not user:
+                return text[:100]  # Fallback
+
+            # Construct a lightweight payload for query extraction
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are a Search Query Generator. Output ONLY a single, effective Google search query based on the user text. Do NOT explain.",
+                },
+                {"role": "user", "content": text[:2000]},  # Limit context for speed
+            ]
+
+            form_data = {"model": model, "messages": messages, "stream": False}
+
+            # Call internal utility to generate query
+            response = await generate_chat_completion(
+                self.request, form_data, user=user
+            )
+
+            # Extract content from response (assuming dict output for stream=False)
+            if isinstance(response, dict) and "choices" in response:
+                return response["choices"][0]["message"]["content"].strip().strip('"')
+
+            return text[:100]  # Fallback
+
+        except Exception as e:
+            self.debug.log(f"Query Gen Failed: {e}", True)
+            return text[:100]
+
     async def inlet(
         self,
         body: dict,
@@ -480,11 +536,14 @@ class Filter:
             EmitterService(__event_emitter__, self),
         )
 
+        await self.em.emit_status("🧠 Thinking..", False)
+
         # Phase 3: State Management
         self.ctx.model.web_search_original = body.get("features", {}).get(
             "web_search", False
         )
         self.ctx.model.forced_language = parsed["lang"]
+        self.ctx.model.is_brief = parsed["is_brief"]
         content = parsed["content"]
 
         # Handle Contextual/Empty Triggers
@@ -495,18 +554,34 @@ class Filter:
                 if isinstance(prev_content, list)
                 else str(prev_content)
             )
-            self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
+
+            if EB_WATERMARK in content:
+                self.debug.log("🌊 Recursive Brief detected: Input contains Watermark.")
+
+            self.debug.log(f"Empty trigger detected. Using context: {content}...")
+
+            # CRITICAL FIX: Extract Search Query if search is requested on context
+            if parsed["is_search"]:
+                await self.em.emit_status("⛏️ Extracting Search Query..", False)
+                content = await self._extract_query(
+                    content, body.get("model"), __user__["id"]
+                )
+                self.debug.log(f"Extracted Query: {content}")
+                await self.em.emit_status(f"🔍 Searching: {content[:60]}...", False)
 
         # Prevent hallucinated reports on greetings or short sentences
         min_words = self.user_valves.min_brief_words
 
-        if parsed["is_brief"] and not parsed["is_search"] and len(content.split()) < min_words:
+        if (
+            parsed["is_brief"]
+            and not parsed["is_search"]
+            and len(content.split()) < min_words
+        ):
             self.debug.log(
                 f"Skipping Brief: content too short ({len(content.split())} < {min_words} words)."
             )
-            await self.em.emit_status("Input too short for Brief", True)
+            await self.em.emit_status("💬 Input too short for Brief", True)
 
-            # Strip the trigger and let the model reply normally as a standard chat
             if body["messages"]:
                 body["messages"][-1]["content"] = content
 
@@ -515,7 +590,6 @@ class Filter:
         self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
 
         try:
-            await self.em.emit_status("EasyBrief Analysis..", False)
 
             # Apply Web Search Override logic
             self.ctx.model.override_web_search = parsed["is_search"]
@@ -539,34 +613,59 @@ class Filter:
                     self.ctx.model.original_model = current_model
                     body["model"] = target_model
 
-                selected_prompt = (
-                    BRIEF_PROMPT if self.user_valves.rich_output else SIMPLE_PROMPT
-                )
+                # Recursive Detection (Watermark Check)
+                is_recursive = EB_WATERMARK in content
 
-                # Resolve lengths (UserValves > Valves)
-                ov_len = self.user_valves.overview_length or self.valves.overview_length
-                syn_len = (
-                    self.user_valves.synthesis_length or self.valves.synthesis_length
-                )
-                ana_len = (
-                    self.user_valves.analysis_length or self.valves.analysis_length
-                )
+                if is_recursive:
+                    self.debug.log(
+                        "🌊 Recursive Brief detected: Switching to NANO mode."
+                    )
+                    selected_prompt = NANO_PROMPT
+                    await self.em.emit_status("✨ Generating a Nano Brief..", False)
 
-                # Dynamic injection of length constraints
-                if self.user_valves.rich_output:
-                    selected_prompt = (
-                        selected_prompt.replace("{OVERVIEW_LENGTH}", ov_len)
-                        .replace("{SYNTESYS_LENGTH}", syn_len)
-                        .replace("{ANALYSYS_LENGTH}", ana_len)
+                else:
+                    # Standard Brief Selection
+                    is_rich = self.user_valves.rich_output
+                    selected_prompt = BRIEF_PROMPT if is_rich else SIMPLE_PROMPT
+
+                    # Notify User of Brief Type
+                    status_label = "Rich Brief" if is_rich else "Simple Brief"
+                    await self.em.emit_status(
+                        f"✨ Generating a {status_label}..", False
                     )
 
-                instr = (
-                    f"{selected_prompt}\n\n{lang_instr}\n\nINPUT TO PROCESS:\n{content}"
-                )
+                    # Resolve lengths (UserValves > Valves)
+                    ov_len = (
+                        self.user_valves.overview_length or self.valves.overview_length
+                    )
+                    syn_len = (
+                        self.user_valves.synthesis_length
+                        or self.valves.synthesis_length
+                    )
+                    ana_len = (
+                        self.user_valves.analysis_length or self.valves.analysis_length
+                    )
+
+                    # Dynamic injection of length constraints only for standard BRIEF_PROMPT
+                    if is_rich:
+                        selected_prompt = (
+                            selected_prompt.replace("{OVERVIEW_LENGTH}", ov_len)
+                            .replace("{SYNTESYS_LENGTH}", syn_len)
+                            .replace("{ANALYSYS_LENGTH}", ana_len)
+                        )
+
+                # FIX: If searching, put the Query FIRST to help RAG generator
+                if parsed["is_search"]:
+                    instr = (
+                        f"Search Query: {content}\n\n{selected_prompt}\n\n{lang_instr}"
+                    )
+                else:
+                    instr = f"{selected_prompt}\n\n{lang_instr}\n\nINPUT TO PROCESS:\n{content}"
 
             else:
-                # Trigger '?' (Quick Search) mode: skip mega-instructions
-                instr = f"{lang_instr}\n\nINPUT TO PROCESS:\n{content}"
+                # Trigger '??' (Quick Search) mode
+                # FIX: Simplify instruction to avoid confusing RAG
+                instr = f"{content}\n\n{lang_instr}" if parsed["lang"] else content
 
             body["messages"][-1]["content"] = instr
 
@@ -587,7 +686,6 @@ class Filter:
             self.debug.log(
                 f"Execution Mode: {'Search' if parsed['is_search'] else 'Brief'} | Briefing: {parsed['is_brief']} | Lang: {parsed['lang'] or 'Auto'}"
             )
-            await self.em.emit_status(f"{APP_NAME} Working..", False)
 
         except Exception as e:
             await self.debug.error(e)
@@ -601,7 +699,13 @@ class Filter:
 
         if self.ctx and self.ctx.model.executed:
 
-            await self.em.emit_status(f"{APP_NAME} Done", True)
+            # Apply invisible watermark to identify EB outputs in future turns
+            if (
+                self.ctx.model.is_brief
+                and "messages" in body
+                and len(body["messages"]) > 0
+            ):
+                body["messages"][-1]["content"] += EB_WATERMARK
 
             # Restore original model if it was swapped
             if self.ctx.model.original_model:
