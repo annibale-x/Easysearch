@@ -87,7 +87,7 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
 2. STRUCTURE & TEMPLATE ARCHITECTURE:
    Your report MUST strictly follow this hierarchical sequence (DO NOT print "BLOCK" labels):
    - [BLOCK 0] Executive Overview ({OVERVIEW_LENGTH}) before any heading. Synthesize core thesis and implications.
-   - [BLOCK 0.5] Structural Visual: CONDITIONAL. Insert a MERMAID CODE BLOCK (```mermaid) containing a `mindmap` OR `graph TD` ONLY IF the topic involves complex structural relationships (systems, taxonomies). OMIT this block for simple rankings, flat lists, or linear chronologies.
+   - [BLOCK 0.5] Structural Visual: CONDITIONAL. Insert a MERMAID CODE BLOCK (```mermaid) containing a `mindmap` ONLY IF the topic involves complex structural relationships (systems, taxonomies). OMIT this block for simple rankings, flat lists, or linear chronologies.
    - [BLOCK 1..N] Macro-topics:
      - ## Heading (preceded by emoji).
      - Concept Synthesis ({SYNTESYS_LENGTH}): Professional narrative explaining foundational logic. FORBIDDEN: Do NOT use bullet points here.
