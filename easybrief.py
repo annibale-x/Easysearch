@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.2.4
+version: 0.2.5
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -51,8 +51,12 @@ TASK: Distill it into a 'Flash Brief' (max 200 words) for quick mobile reading.
 """
 
 SIMPLE_PROMPT = """
-Analyze the input and reorganize it into a structured executive report. 
+nalyze the input and reorganize it into a structured executive report. 
 Follow these mandatory rules:
+
+0. LANGUAGE PROTOCOL:
+   - PRIORITY: If a specific language is requested at the end of this prompt, YOU MUST OBEY IT.
+   - DEFAULT: Otherwise, DETECT the language of the input and respond in the SAME language.
 
 1. DATA & COMPARISONS (TABLES):
    - Use standard Markdown TABLES for all data lists, technical comparisons, chronologies, and projections.
@@ -412,30 +416,26 @@ class Filter:
         self.output_content = ""
 
     def _parse_trigger(self, txt: str) -> Optional[dict]:
-        """Validate input and parse trigger, language, and content."""
+        """Validate input and parse trigger, language, and modifiers."""
 
-        # Normalize "Smart Punctuation" (iOS/macOS/Android) to ASCII triggers
-        # We only replace the FIRST occurrence to avoid altering the message content
+        # Normalize "Smart Punctuation"
         smart_map = {"»": ">>", "«": "<<", "—": "--", "–": "--", "→": "->", "←": "<-"}
-
         for smart, ascii_val in smart_map.items():
             if txt.startswith(smart):
                 txt = txt.replace(smart, ascii_val, 1)
                 break
 
-        # Define trigger mapping with priorities
-        # Priority order matters if user customizes triggers to have prefix overlaps
+        # Define trigger mapping (Search+Brief, Brief, Search)
         triggers = [
-            (self.valves.search_and_brief_trigger, True, True),  # ?> (Search + Brief)
-            (self.valves.brief_trigger, False, True),  # >> (Brief Only)
-            (self.valves.search_trigger, True, False),  # ?? (Search Only)
+            (self.valves.search_and_brief_trigger, True, True),
+            (self.valves.brief_trigger, False, True),
+            (self.valves.search_trigger, True, False),
         ]
 
         active_trigger = None
         is_search = False
         is_brief = False
 
-        # Identify which trigger starts the text
         for trigger, search_flag, brief_flag in triggers:
             if txt.startswith(trigger):
                 active_trigger = trigger
@@ -446,18 +446,58 @@ class Filter:
         if not active_trigger:
             return None
 
-        # Extract everything after the trigger
+        # Extract remainder and parse modifiers loop
         remainder = txt[len(active_trigger) :]
-        lang = None
 
-        # Check for :lang syntax (e.g. :it)
-        if remainder.startswith(":"):
-            lang = remainder[1:3]
-            remainder = remainder[3:]
+        # State flags
+        lang = None
+        is_nano = False
+        force_rich = None  # None=Default, True=Rich(:r), False=Simple(:s)
+
+        while remainder.startswith(":"):
+            # Check for Nano flag (:n)
+            if remainder.startswith(":n") and (
+                len(remainder) == 2 or remainder[2] in [" ", ":"]
+            ):
+                is_nano = True
+                remainder = remainder[2:]
+                continue
+
+            # Check for Rich flag (:r)
+            if remainder.startswith(":r") and (
+                len(remainder) == 2 or remainder[2] in [" ", ":"]
+            ):
+                force_rich = True
+                remainder = remainder[2:]
+                continue
+
+            # Check for Simple flag (:s)
+            if remainder.startswith(":s") and (
+                len(remainder) == 2 or remainder[2] in [" ", ":"]
+            ):
+                force_rich = False
+                remainder = remainder[2:]
+                continue
+
+            # Check for Language (Any 2 chars)
+            # Heuristic: :xx followed by space, end, or another :
+            if (
+                len(remainder) >= 3
+                and remainder[1:3].isalpha()
+                and (len(remainder) == 3 or remainder[3] in [" ", ":"])
+            ):
+                lang = remainder[1:3]
+                remainder = remainder[3:]
+                continue
+
+            # If strictly starting with :, but no match found, treat as content
+            break
 
         return {
             "is_search": is_search,
             "is_brief": is_brief,
+            "is_nano": is_nano,
+            "force_rich": force_rich,
             "lang": lang,
             "content": remainder.strip(),
         }
@@ -594,16 +634,16 @@ class Filter:
             # Apply Web Search Override logic
             self.ctx.model.override_web_search = parsed["is_search"]
 
-            # Build Language Instruction
-            lang_instr = (
-                f"MANDATORY: Respond in {parsed['lang'].upper()}."
-                if parsed["lang"]
-                else "DETECT and match the input language."
-            )
+            # FIX: Stronger Language Instruction for smaller models (12B)
+            if parsed["lang"]:
+                lang_instr = f"*** REQUIRED OUTPUT LANGUAGE: {parsed['lang'].upper()} (Translate if necessary) ***"
+            else:
+                lang_instr = "DETECT and match the input language."
 
             # Decision Logic: Quick Search vs Briefing
             if parsed["is_brief"]:
 
+                # ... [Code for Model Swapping is unchanged] ...
                 # Check if a specific task model is requested via UserValves
                 target_model = self.user_valves.task_model
                 current_model = body.get("model")
@@ -613,25 +653,30 @@ class Filter:
                     self.ctx.model.original_model = current_model
                     body["model"] = target_model
 
-                # Recursive Detection (Watermark Check)
+                # 1. Check for Nano Mode (Modifier OR Watermark)
                 is_recursive = EB_WATERMARK in content
-
-                if is_recursive:
+                if parsed["is_nano"] or is_recursive:
                     self.debug.log(
-                        "🌊 Recursive Brief detected: Switching to NANO mode."
+                        f"Nano Mode Active (Modifier: {parsed['is_nano']}, Recursive: {is_recursive})"
                     )
                     selected_prompt = NANO_PROMPT
-                    await self.em.emit_status("✨ Generating a Nano Brief..", False)
+                    await self.em.emit_status("⚡ Nano Brief Generating...", False)
 
                 else:
-                    # Standard Brief Selection
-                    is_rich = self.user_valves.rich_output
+                    # 2. Determine Rich Mode (Modifier Override > Valve Default)
+                    if parsed["force_rich"] is not None:
+                        is_rich = parsed["force_rich"]
+                    else:
+                        is_rich = self.user_valves.rich_output
+
+                    # Select Prompt based on Mode
                     selected_prompt = BRIEF_PROMPT if is_rich else SIMPLE_PROMPT
 
-                    # Notify User of Brief Type
+                    # Notify User
+                    status_icon = "📊" if is_rich else "📝"
                     status_label = "Rich Brief" if is_rich else "Simple Brief"
                     await self.em.emit_status(
-                        f"✨ Generating a {status_label}..", False
+                        f"{status_icon} {status_label} Generating...", False
                     )
 
                     # Resolve lengths (UserValves > Valves)
@@ -646,7 +691,6 @@ class Filter:
                         self.user_valves.analysis_length or self.valves.analysis_length
                     )
 
-                    # Dynamic injection of length constraints only for standard BRIEF_PROMPT
                     if is_rich:
                         selected_prompt = (
                             selected_prompt.replace("{OVERVIEW_LENGTH}", ov_len)
@@ -654,13 +698,19 @@ class Filter:
                             .replace("{ANALYSYS_LENGTH}", ana_len)
                         )
 
-                # FIX: If searching, put the Query FIRST to help RAG generator
+                # FIX: Delimiters strategy to prevent Context Confusion in small models
                 if parsed["is_search"]:
                     instr = (
                         f"Search Query: {content}\n\n{selected_prompt}\n\n{lang_instr}"
                     )
                 else:
-                    instr = f"{selected_prompt}\n\n{lang_instr}\n\nINPUT TO PROCESS:\n{content}"
+                    instr = (
+                        f"{selected_prompt}\n\n"
+                        f"=== BEGIN INPUT DATA ===\n"
+                        f"{content}\n"
+                        f"=== END INPUT DATA ===\n\n"
+                        f"{lang_instr}"
+                    )
 
             else:
                 # Trigger '??' (Quick Search) mode
