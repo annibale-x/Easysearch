@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.3
+version: 0.4.4
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -508,26 +508,29 @@ class Filter:
         S = self.valves.search_prefix
         B = self.valves.brief_prefix
 
-        trigger_map = {
-            # Modifiers
-            f"n{B}": {"s": False, "b": True, "mode": "nano"},
-            f"s{B}": {"s": False, "b": True, "mode": "schematic"},
-            f"t{B}": {"s": False, "b": True, "mode": "table"},
-            f"r{B}": {"s": False, "b": True, "mode": "rich"},
-            # Default
-            f"{B}{B}": {
-                "s": False,
-                "b": True,
-                "mode": None,
-            },  # None means "Use Default"
-            # Search Combinations
-            f"{S}{S}": {"s": True, "b": False, "mode": None},
-            f"{S}{B}": {"s": True, "b": True, "mode": None},  # Search + Default
-            f"{S}n": {"s": True, "b": True, "mode": "nano"},
-            f"{S}s": {"s": True, "b": True, "mode": "schematic"},
-            f"{S}t": {"s": True, "b": True, "mode": "table"},
-            f"{S}r": {"s": True, "b": True, "mode": "rich"},
-        }
+        # Core modes mapping
+        modes = {"n": "nano", "s": "schematic", "t": "table", "r": "rich"}
+
+        trigger_map = {}
+
+        # Generate permutations for modes (Lower & Upper)
+        for k, mode in modes.items():
+            for char in (k.lower(), k.upper()):
+                trigger_map[f"{char}{B}"] = {"s": False, "b": True, "mode": mode}
+                trigger_map[f"{S}{char}"] = {"s": True, "b": True, "mode": mode}
+
+        # Explicit overrides for Double-Tap (High Priority)
+        trigger_map.update(
+            {
+                f"{B}{B}": {"s": False, "b": True, "mode": None},  # Default Brief
+                f"{S}{S}": {"s": True, "b": False, "mode": None},  # Search Only
+                f"{S}{B}": {
+                    "s": True,
+                    "b": True,
+                    "mode": None,
+                },  # Search + Default Brief
+            }
+        )
 
         # 3. Robust Tokenization (Unix-Style)
         parts = txt.split(maxsplit=1)
