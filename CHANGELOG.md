@@ -1,5 +1,6 @@
+* **2026-02-20**: v0.4.2 - new syntax, nano, table, schematic and rich brief, prompt tuning (Hannibal)   
 
-* **2026-02-20**: v0.3.6 - nano, simple and rich brief (Hannibal)   
+* **2026-02-20**: v0.3.7 - nano, simple and rich brief (Hannibal)   
 
 * **2026-02-19**: v0.2.4 - general fixes and query extraction from assistant message (Hannibal)   
 

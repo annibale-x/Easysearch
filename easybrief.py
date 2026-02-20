@@ -1,11 +1,11 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.3.7
+version: 0.4.2
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
 author_url: https://openwebui.com/u/h4nn1b4l
-description: Transform text and web search results into structured Executive Reports with tables and mindmaps using simple triggers (??, >>, ?>).
+description: Transform text and web search results into structured Executive Reports with tables and mindmaps using simple triggers (??, >>, v>, t>).
 """
 
 import json
@@ -19,6 +19,7 @@ from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
 
+
 # --- CONSTANTS ---
 
 APP_ICON = "✨"
@@ -28,7 +29,60 @@ SUPPRESS_OUTPUT = False
 EB_WATERMARK = "\u200b\u200b\u200b"  # Invisible watermark (3 Zero Width Spaces)
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
 
-# --- PROMPT TEMPLATES with Placeholders ---
+# --- MERMAID EXAMPLES (Extracted from source v0.3.7) ---
+
+MERMAID_EXAMPLES = """
+4. MERMAID EXAMPLES
+   - MANDATORY: Use double quotes for labels.
+
+```mermaid
+graph TD
+    A["NVIDIA Design"] --> B("TSMC Manufacturing")
+    C["SK Hynix/Samsung (HBM/DRAM)"] --> B
+    B --> D{"Packaging & Testing (TSMC CoWoS)"}
+    D --> E["Distribution (Data Centers/Cloud)"]
+    E --> F["End-User Deployment"]
+    ...
+```
+
+```mermaid
+graph TD
+    A["Human Nervous System"] 
+        -->|CNS| B["Brain"]
+        -->|CNS| E["Spinal Cord"]
+        -->|PNS| F["Somatic Nervous System"]
+        -->|PNS| G["Autonomic Nervous System"]
+    B --> D["Sympathetic Nervous System"]
+    B --> E["Parasympathetic Nervous System"]
+    ...
+```
+
+```mermaid
+mindmap
+  root("Main Subject")
+    ("Node")
+      ("Sub-Node")
+      ("Sub-node (wit parens-enclosed text)")
+    ("Node")
+      ("Sub-Node")
+        ("Sub-Sub-Node")
+      ("Sub-Node")
+        ("Sub-Sub-Node") 
+      ... 
+```
+
+```mermaid
+pie
+  title AI Chip Market Share (2024)
+  "NVIDIA" : 95
+  "AMD" : 15
+  "Intel" : 8
+  "Other (ASICs)" : 5
+  ...
+```
+"""
+
+# --- PROMPT TEMPLATES ---
 
 NANO_PROMPT = """
 The input is an existing technical report. 
@@ -52,17 +106,17 @@ TASK: Distill it into a 'Flash Brief' (max {NANO_LENGTH} words) for quick mobile
    - Must use the format defined above
 """
 
-SIMPLE_PROMPT = """
-Analyze the input and reorganize it into a structured executive report. 
+TABLE_PROMPT = """
+Analyze the input and reorganize it into a structured executive report.
 Follow these mandatory rules:
 
 0. LANGUAGE PROTOCOL:
    {LANGUAGE_INSTRUCTION}
 
 1. DATA & COMPARISONS (TABLES):
-   - Use standard Markdown TABLES for all data lists, technical comparisons, chronologies, and projections.
+   - MANDATORY: Use standard Markdown TABLES for all data lists, time-series, timelines, bullet lists, comparisons, and specs.
    - MANDATORY: Write tables DIRECTLY in the message body. No backticks.
-   - FORBIDDEN: NEVER use Mermaid diagrams or any code-based visualization.
+   - FORBIDDEN: NEVER use bullet lists, Mermaid diagrams or any code-based visualization.
 
 2. TEXT & CONTEXT MANAGEMENT:
    - Provide exactly 1-2 lines of introductory context before every table.
@@ -70,11 +124,38 @@ Follow these mandatory rules:
    - SPACING: Insert a horizontal divider (---) between every main section.
    - SUMMARY: Summarize verbose text aggressively, keeping any text block under 3 lines.
 
-3. SUMMARY & CLEANLINESS: 
-   - Conclude with a **📌 Key Takeaways** box using a blockquote (>). 
+3. SUMMARY & CLEANLINESS:
+   - Conclude with a **📌 Key Takeaways** box using a blockquote (>).
    - MANDATORY: Do not add any introductory or concluding remarks or meta-talk. The output must end exactly at the Key Takeaways box.
 
-GOAL: Professional, clean, and strictly tabular report.
+GOAL: Professional, visual, strictly technical report. No bullet points, only standard MARKDOWN tables.
+"""
+
+SCHEMATIC_PROMPT = """
+Analyze the input and reorganize it into a structured technical report. 
+Follow these mandatory rules:
+
+0. LANGUAGE PROTOCOL:
+   {LANGUAGE_INSTRUCTION}
+
+1. VISUALIZATION FIRST (Mermaid > Tables):
+   - TOP PRIORITY: If the topic involves structure, hierarchy, or flows, YOU MUST START with a Mermaid diagram (Mindmap or Flowchart).
+   - DATA SEGMENTATION: Use Mermaid for high-level relationships/logic. Use Tables for granular specs, comparisons, or flat lists.
+   - NO REDUNDANCY: Do NOT repeat the same content in both a diagram and a table. Choose the best format for the data type.
+
+2. TEXT & CONTEXT MANAGEMENT:
+   - Provide exactly 1-2 lines of introductory context before every visual element.
+   - NO NARRATIVE FLUFF: Do not write long paragraphs. Convert text into structured formats.
+   - NO BULLET LISTS: Convert lists of items into Tables or Mindmaps.
+   - SPACING: Insert a horizontal divider (---) between every main section.
+
+3. SUMMARY & CLEANLINESS: 
+   - Conclude with a **📌 Key Takeaways** box (concise summary points (bullet list)) using a blockquote (>). 
+   - MANDATORY: Do not add any introductory or concluding remarks or meta-talk. The output must end exactly at the Key Takeaways box.
+
+{MERMAID_EXAMPLES}
+
+GOAL: Professional, visual, strictly technical report. Prioritize Mindmaps/Flowcharts for structure, Tables for data.
 """
 
 BRIEF_PROMPT = """
@@ -89,12 +170,13 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
 
 2. STRUCTURE & TEMPLATE ARCHITECTURE:
    Your report MUST strictly follow this hierarchical sequence (DO NOT print "BLOCK" labels):
-   - [BLOCK 0] Executive Overview ({OVERVIEW_LENGTH}) before any heading. Synthesize core thesis and implications.
+   - [BLOCK 0] Executive Overview: MUST start with the header '## 🎯 Executive Overview'. Followed by a concise thesis ({OVERVIEW_LENGTH}). Focus strictly on the core conclusion.
    - [BLOCK 0.5] Structural Visual: CONDITIONAL. Insert a MERMAID CODE BLOCK (```mermaid) containing a `mindmap` ONLY IF the topic involves complex structural relationships (systems, taxonomies). OMIT this block for simple rankings, flat lists, or linear chronologies.
    - [BLOCK 1..N] Macro-topics:
      - Separator (---) 
      - ## Heading (preceded by emoji).
-     - Concept Synthesis ({SYNTESYS_LENGTH}): Professional narrative explaining foundational logic. FORMAT: Strictly continuous paragraphs. NO lists/bullets.
+     - Concept Synthesis ({SYNTESYS_LENGTH}): Fact-based summary. FORMAT: Strictly continuous paragraphs. Style: Dry, technical, zero fluff. No adjectives.
+       *** CRITICAL OVERRIDE: If input data for this topic is scarce/short, IGNORE length target. Be concise. DO NOT invent filler content. ***
      - [Optional Data Block]: Analytical Context ({ANALYSYS_LENGTH}) followed by its Visual Element (Table, Pie Chart, or Graph).
    - [FINAL BLOCK] 📌 Key Takeaways (blockquote >).
 
@@ -106,52 +188,11 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    - NARRATIVE PRIORITY: Every visual element MUST be preceded by its own Analytical Context block.
    - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. For multi-level/nested lists, YOU MUST split them into specific Sub-headings (###) containing their own dedicated Tables.
 
-
-4. MERMAID VALID SYNTAX
-
-```mermaid
-graph TD
-    A["Main System"] --> B["Subsystem 1"]
-    A --> C["Subsystem 2"]
-    B --> D["Leaf Component"]
-```
-
-```mermaid
-graph TD
-    A["Human Nervous System"] 
-        -->|CNS| B["Brain"]
-        -->|CNS| E["Spinal Cord"]
-        -->|PNS| F["Somatic Nervous System"]
-        -->|PNS| G["Autonomic Nervous System"]
-    B --> D["Sympathetic Nervous System"]
-    B --> E["Parasympathetic Nervous System"]
-```
-
-```mermaid
-mindmap
-  root("Main Subject")
-    ("Node")
-      ("Sub-Node")
-      ("Sub-node (wit parens-enclosed text)")
-    ("Node")
-      ("Sub-Node")
-        ("Sub-Sub-Node")
-      ("Sub-Node")
-        ("Sub-Sub-Node") 
-      ... 
-
-```
-
-```mermaid
-pie
-  title AI Chip Market Share (2024)
-  "NVIDIA" : 95
-  "AMD" : 15
-  "Intel" : 8
-  "Other (ASICs)" : 5
-```
+{MERMAID_EXAMPLES}
 
 5. REFERENCE TEMPLATE:
+
+---
 
 ## 🎯 Executive Overview
 
@@ -166,11 +207,9 @@ graph TD
 
 ## ⚙️ Foundational Logic
 
-**Concept Synthesis**: 
-{SYNTESYS_LENGTH} words block. Do NOT use bullet points here. Write a cohesive narrative using continuous paragraphs.
+**Concept Synthesis**: {SYNTESYS_LENGTH} words block. Do NOT use bullet points here. Write a dense, factual summary.
 
-**Analytical Insight**: 
-{ANALYSYS_LENGTH} words block.
+**Analytical Insight**: {ANALYSYS_LENGTH} words block.
 
 | Dimension | Impact |
 |-----------|--------|
@@ -396,7 +435,7 @@ class Filter:
     class UserValves(BaseModel):
         default_brief_mode: str = Field(
             default="rich",
-            description="Your personal preference for '>>' (rich, simple, nano). Overrides global setting.",
+            description="Your personal preference for '>>'. Options: rich, schematic, table, nano.",
         )
         task_model: Optional[str] = Field(
             default=None,
@@ -413,23 +452,23 @@ class Filter:
             description="Target word count for Nano briefs (Range: 50-500).",
         )
         overview_length: str = Field(
-            default="max 150 words",
+            default="max 100 words",
             description="Target length for Executive Overview (Rich Brief).",
         )
         synthesis_length: str = Field(
-            default="max 100 words",
+            default="max 80 words",
             description="Target length for Concept Synthesis (Rich Brief).",
         )
         analysis_length: str = Field(
-            default="max 50 words",
+            default="max 40 words",
             description="Target length for Analytical Context (Rich Brief).",
         )
         debug: bool = Field(default=False)
 
         @validator("default_brief_mode")
         def validate_mode(cls, v):
-            if v not in ["rich", "simple", "nano"]:
-                raise ValueError("Mode must be one of: rich, simple, nano")
+            if v not in ["rich", "schematic", "table", "nano"]:
+                raise ValueError("Mode must be: rich, schematic, table, nano")
             return v
 
     def __init__(self):
@@ -467,22 +506,25 @@ class Filter:
         S = self.valves.search_prefix
         B = self.valves.brief_prefix
 
-        # FIX: Remove default resolution here.
-        # >> must return None for 'r' to distinguish it from explicit r>
-        default_mode = self.user_valves.default_brief_mode
-        def_n = True if default_mode == "nano" else False
-        # Note: def_r is removed because >> will carry None
-
         trigger_map = {
-            f"n{B}": {"s": False, "b": True, "r": None, "n": True},
-            f"r{B}": {"s": False, "b": True, "r": True, "n": False},
-            f"s{B}": {"s": False, "b": True, "r": False, "n": False},
-            f"{B}{B}": {"s": False, "b": True, "r": None, "n": def_n},
-            f"{S}{S}": {"s": True, "b": False, "r": None, "n": False},
-            f"{S}{B}": {"s": True, "b": True, "r": None, "n": def_n},
-            f"{S}n": {"s": True, "b": True, "r": None, "n": True},
-            f"{S}r": {"s": True, "b": True, "r": True, "n": False},
-            f"{S}s": {"s": True, "b": True, "r": False, "n": False},
+            # Modifiers
+            f"n{B}": {"s": False, "b": True, "mode": "nano"},
+            f"s{B}": {"s": False, "b": True, "mode": "schematic"},
+            f"t{B}": {"s": False, "b": True, "mode": "table"},
+            f"r{B}": {"s": False, "b": True, "mode": "rich"},
+            # Default
+            f"{B}{B}": {
+                "s": False,
+                "b": True,
+                "mode": None,
+            },  # None means "Use Default"
+            # Search Combinations
+            f"{S}{S}": {"s": True, "b": False, "mode": None},
+            f"{S}{B}": {"s": True, "b": True, "mode": None},  # Search + Default
+            f"{S}n": {"s": True, "b": True, "mode": "nano"},
+            f"{S}s": {"s": True, "b": True, "mode": "schematic"},
+            f"{S}t": {"s": True, "b": True, "mode": "table"},
+            f"{S}r": {"s": True, "b": True, "mode": "rich"},
         }
 
         # 3. Robust Tokenization (Unix-Style)
@@ -502,12 +544,16 @@ class Filter:
         if not matched_cfg:
             return None
 
-        # 4. Extract Modifier
+        # 4. Extract Modifier (Strict Syntax)
         raw_mod = command_token[2:]
         lang = None
 
         if raw_mod:
-            clean_mod = raw_mod.lstrip(":")
+            # Strict Check: Modifiers MUST start with ':'
+            if not raw_mod.startswith(":"):
+                return None
+
+            clean_mod = raw_mod[1:]
             if clean_mod:
                 lang = clean_mod
 
@@ -517,8 +563,7 @@ class Filter:
         return {
             "is_search": matched_cfg["s"],
             "is_brief": matched_cfg["b"],
-            "is_nano": matched_cfg["n"],
-            "force_rich": matched_cfg["r"],
+            "target_mode": matched_cfg["mode"],
             "lang": lang,
             "content": content,
         }
@@ -704,15 +749,25 @@ class Filter:
                 input_words = len(clean_content.split())
                 smart_threshold = self.user_valves.smart_nano_threshold
 
-                # Check triggers
-                user_wants_nano = parsed["is_nano"] or (EB_WATERMARK in content)
+                # State variables
+                user_wants_nano = False
+                explicit_mode = parsed[
+                    "target_mode"
+                ]  # rich, schematic, table, nano, or None
 
-                # Logic: Absolute Override based on threshold (except for Web Search)
-                # If text is short, we force Nano. No debate.
+                # Resolve Modes
+                if explicit_mode == "nano":
+                    user_wants_nano = True
+                elif EB_WATERMARK in content:
+                    user_wants_nano = True
+
+                # Logic: Smart switch only if mode is None (implicit >>) AND text is short
                 force_smart_nano = (
                     not parsed["is_search"]
                     and input_words < smart_threshold
                     and smart_threshold > 0
+                    and explicit_mode is None
+                    and not user_wants_nano
                 )
 
                 if user_wants_nano or force_smart_nano:
@@ -721,10 +776,8 @@ class Filter:
                     # If forced by smart logic, use 70% of input length to stay tight
                     if force_smart_nano:
                         calc_len = int(input_words * AUTO_NANO_BRIEF_COMPRESSION)
-                        target_len = max(
-                            50, calc_len, self.user_valves.max_nano_brief_length
-                        )
-                        status_msg = f"💬 Input too short ({input_words}w). Auto Nano Brief ({target_len}w).. ({calc_len})"
+                        target_len = max(50, calc_len)
+                        status_msg = f"💬 Input too short ({input_words}w). Auto-Nano ({target_len}w).."
                     else:
                         target_len = self.user_valves.max_nano_brief_length
                         status_msg = "✨ Generating a Nano Brief.."
@@ -739,32 +792,44 @@ class Filter:
                     await self.em.emit_status(status_msg, False)
 
                 else:
-                    # 2. Rich/Simple Mode
-                    is_rich = parsed["force_rich"]
+                    # 2. Rich/Schematic/Table Mode
 
-                    # FIX: Resolve Default Mode here (Late Binding)
-                    # If parsed["force_rich"] is None (which happens for >> or ?>), use Default Valve
-                    if is_rich is None:
-                        is_rich = self.user_valves.default_brief_mode == "rich"
+                    # Resolve Final Mode (Default Fallback)
+                    final_mode = explicit_mode
+                    if final_mode is None:
+                        final_mode = self.user_valves.default_brief_mode
+                        # Remap deprecated 'simple' to 'table' in user config just in case
+                        if final_mode == "simple":
+                            final_mode = "table"
 
-                    base_prompt = BRIEF_PROMPT if is_rich else SIMPLE_PROMPT
-                    status_label = "Rich Brief" if is_rich else "Simple Brief"
-                    await self.em.emit_status(
-                        f"✨ Generating a {status_label}..", False
-                    )
-
-                    # Dynamic Format of the Prompt
-                    if is_rich:
-                        selected_prompt = base_prompt.format(
+                    # Select Prompt
+                    if final_mode == "schematic":
+                        base_prompt = SCHEMATIC_PROMPT.format(
+                            MERMAID_EXAMPLES=MERMAID_EXAMPLES,
+                            LANGUAGE_INSTRUCTION=lang_instruction,
+                        )
+                        status_label = "Schematic Brief"
+                    elif final_mode == "table":
+                        base_prompt = TABLE_PROMPT.format(
+                            LANGUAGE_INSTRUCTION=lang_instruction
+                        )
+                        status_label = "Table Brief"
+                    else:
+                        # Rich Brief (Default)
+                        base_prompt = BRIEF_PROMPT.format(
                             OVERVIEW_LENGTH=self.user_valves.overview_length,
                             SYNTESYS_LENGTH=self.user_valves.synthesis_length,
                             ANALYSYS_LENGTH=self.user_valves.analysis_length,
                             LANGUAGE_INSTRUCTION=lang_instruction,
+                            MERMAID_EXAMPLES=MERMAID_EXAMPLES,
                         )
-                    else:
-                        selected_prompt = base_prompt.format(
-                            LANGUAGE_INSTRUCTION=lang_instruction
-                        )
+                        status_label = "Rich Brief"
+
+                    await self.em.emit_status(
+                        f"✨ Generating a {status_label}..", False
+                    )
+
+                    selected_prompt = base_prompt
 
                 data_content = (
                     f"Search Query: {content}" if parsed["is_search"] else content
@@ -799,7 +864,6 @@ class Filter:
 
             body["messages"][-1]["content"] = instr
 
-            # CRITICAL FIX: Isolation Mode
             # We must wipe history for:
             # 1. Briefs (>>) -> Always fresh analysis
             # 2. Explicit Search (?? query) -> Prevent context bleeding/hallucination from previous turns
@@ -807,7 +871,9 @@ class Filter:
             is_explicit_search = parsed["is_search"] and len(content.strip()) > 0
 
             if parsed["is_brief"] or is_explicit_search:
-                body["messages"] = [body["messages"][-1]]
+                # Standard Isolation: Keep only the current instruction
+                current_instr = body["messages"][-1]["content"]
+                body["messages"] = [{"role": "user", "content": current_instr}]
                 self.debug.log("History wiped: Isolation Mode active.")
 
             if self.ctx.model.override_web_search is not None:
