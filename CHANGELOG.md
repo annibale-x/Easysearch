@@ -1,3 +1,14 @@
+* **2026-02-20**: v0.4.4 - Document Intelligence & Attachment Support (Hannibal)  
+  
+  * **Document Support**: Added native detection and processing for file attachments (PDF, DOCX, CSV) and images.
+  
+  * **Context Preservation**: The Isolation Mode now intelligently preserves `files` and `images` keys while wiping chat history, enabling RAG/Vision context injection.
+  
+  * **Smart Nano Override**: Logic updated to disable "Auto-Nano" when attachments are present, preventing large documents from being compressed due to short trigger commands.
+  
+  * **Dynamic Prompting**: Prompt header now adapts to `=== ATTACHED CONTEXT ANALYSIS ===` when files are detected.
+  
+  * **Capability Engine**: Added `_get_capabilities` method to inspect global model registry for vision and file context support.
 
 * **2026-02-20**: v0.4.3 - fixes and minor optimizations (Hannibal)   
 

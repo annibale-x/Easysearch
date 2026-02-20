@@ -5,22 +5,20 @@ author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
 author_url: https://openwebui.com/u/h4nn1b4l
-description: Transform text and web search results into structured Executive Reports with tables and mindmaps using simple triggers (??, >>, v>, t>).
+description: Transform text, web searches, and attached documents into structured Executive Reports with tables and mindmaps using simple triggers (??, >>, s>, t>).
 """
 
 import json
 import re
 import time
 import sys
+import os
 import httpx  # type: ignore
 from typing import Optional, Any, List, Dict, Tuple, Union
 from pydantic import BaseModel, Field, validator
 from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
-
-# TODO: Nel schematic brief il prompt tende a buttare sche mi e mindmap in fondo alle tabelle, con contenuti già rappresentati in tabella, biogna dire al modello di privilegiare i diagrammi e non ridondare le tabelle
-
 
 # --- CONSTANTS ---
 
@@ -170,6 +168,9 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    {LANGUAGE_INSTRUCTION}
    - ZERO PREAMBLE: Start immediately with the first content block. No intro meta-talk. 
 
+1.5 BRIEF DENSITY (STRICT):
+   - You must use minimum 1500 words    
+
 2. STRUCTURE & TEMPLATE ARCHITECTURE:
    Your report MUST strictly follow this hierarchical sequence (DO NOT print "BLOCK" labels):
    - [BLOCK 0] Executive Overview: MUST start with the header '## 🎯 Executive Overview'. Followed by a concise thesis ({OVERVIEW_LENGTH}). Focus strictly on the core conclusion.
@@ -179,7 +180,7 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
      - ## Heading (preceded by emoji).
      - Concept Synthesis ({SYNTESYS_LENGTH}): Fact-based summary. FORMAT: Strictly continuous paragraphs. Style: Dry, technical, zero fluff. No adjectives.
        *** CRITICAL OVERRIDE: If input data for this topic is scarce/short, IGNORE length target. Be concise. DO NOT invent filler content. ***
-     - [Optional Data Block]: Analytical Context ({ANALYSYS_LENGTH}) followed by its Visual Element (Table, Pie Chart, or Graph).
+     - [Optional Data Block]: Analytical Context ({ANALYSYS_LENGTH}) followed by its Visual Element (Table OR Pie Chart, Mindmap or Graph).
    - [FINAL BLOCK] 📌 Key Takeaways (blockquote >).
 
 3. VISUAL ELEMENT RULES:
@@ -189,6 +190,7 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    - VISUAL ACCESSIBILITY: Ensure high contrast (dark text on light nodes, light text on dark nodes).
    - NARRATIVE PRIORITY: Every visual element MUST be preceded by its own Analytical Context block.
    - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. For multi-level/nested lists, YOU MUST split them into specific Sub-headings (###) containing their own dedicated Tables.
+
 
 {MERMAID_EXAMPLES}
 
@@ -234,6 +236,92 @@ CRITICAL RECAP:
 - Use 📌 as emoji in the Key Takeaways.
 - Must use the format of REFERENCE TEMPLATE defined above
 """
+
+
+class FileService:
+    """Service to handle direct file reading and text extraction."""
+
+    def __init__(self, debug_service):
+        self.debug = debug_service
+
+    def extract_text(self, file_path: str, content_type: str) -> str:
+        """Determines the file type and extracts text accordingly."""
+        if not os.path.exists(file_path):
+            self.debug.log(f"File not found at path: {file_path}", True)
+            return ""
+
+        try:
+            if "pdf" in content_type:
+                return self._read_pdf(file_path)
+            elif "word" in content_type or "docx" in content_type:
+                return self._read_docx(file_path)
+            else:
+                # Default to text/plain
+                return self._read_text(file_path)
+        except Exception as e:
+            self.debug.log(f"Extraction failed for {file_path}: {str(e)}", True)
+            return ""
+
+    def _read_text(self, path: str) -> str:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        except Exception as e:
+            self.debug.log(f"Text read error: {e}", True)
+            return ""
+
+    def _read_pdf(self, path: str) -> str:
+        text_content = []
+        try:
+            import pypdf  # type: ignore
+
+            reader = pypdf.PdfReader(path)
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text:
+                    text_content.append(f"--- PAGE {i+1} ---\n{text}")
+
+                # Basic check for images (heuristic)
+                if "/XObject" in page.get("/Resources", {}):
+                    text_content.append(
+                        "\n[SYSTEM NOTE: Page contains visual elements/images not extracted]\n"
+                    )
+
+            return "\n".join(text_content)
+        except ImportError:
+            self.debug.log("pypdf library not found. Falling back to raw text.", True)
+            return self._read_text(path)
+        except Exception as e:
+            self.debug.log(f"PDF read error: {e}", True)
+            return ""
+
+    def _read_docx(self, path: str) -> str:
+        text_content = []
+        try:
+            import docx  # type: ignore
+
+            doc = docx.Document(path)
+            for para in doc.paragraphs:
+                if para.text:
+                    text_content.append(para.text)
+
+            # Extract Tables from DOCX
+            for table in doc.tables:
+                text_content.append("\n[DOCX TABLE DATA]:")
+                for row in table.rows:
+                    row_data = [cell.text for cell in row.cells]
+                    text_content.append(" | ".join(row_data))
+                text_content.append("\n")
+
+            return "\n".join(text_content)
+        except ImportError:
+            self.debug.log(
+                "python-docx library not found. Falling back to raw text.", True
+            )
+            return self._read_text(path)
+        except Exception as e:
+            self.debug.log(f"DOCX read error: {e}", True)
+            return ""
 
 
 class ConfigService:
@@ -573,6 +661,29 @@ class Filter:
             "content": content,
         }
 
+    def _get_capabilities(self, model_id: str) -> dict:
+        """Retrieve model capabilities from the global application state."""
+        default_caps = {"vision": False, "file_context": False}
+
+        if not self.request or not hasattr(self.request.app.state, "MODELS"):
+            return default_caps
+
+        try:
+            models = self.request.app.state.MODELS
+            if model_id in models:
+                # Based on the user dump structure
+                meta = models[model_id].get("info", {}).get("meta", {})
+                caps = meta.get("capabilities", {})
+                return {
+                    "vision": caps.get("vision", False),
+                    "file_context": caps.get("file_context", False),
+                }
+        except Exception as e:
+            if self.debug:
+                self.debug.log(f"Capability Check Error: {e}", True)
+
+        return default_caps
+
     async def _extract_query(
         self, text: str, model: str, user_id: str, target_lang: str = None
     ) -> str:
@@ -625,7 +736,7 @@ class Filter:
 
         self.ctx = None
 
-        # Phase 0: Early User Config Load (Required for Dynamic Triggers)
+        # Phase 0: Early User Config Load
         self.request = __request__
         uv_data = __user__.get("valves", {}) if __user__ else {}
         self.user_valves = (
@@ -636,40 +747,111 @@ class Filter:
         if not msg_list:
             return body
 
-        last_msg = msg_list[-1].get("content", "")
+        # Phase 1: Robust Attachment Detection
+        last_msg_obj = msg_list[-1]
+        msg_files = last_msg_obj.get("files", []) or last_msg_obj.get("images", [])
+
+        root_files = body.get("files", [])
+        meta_files = body.get("metadata", {}).get("files", [])
+
+        has_attachments = len(msg_files) > 0
+
+        # Phase 2: Trigger Parsing
+        last_msg_content = last_msg_obj.get("content", "")
         txt = (
-            last_msg[0].get("text", "") if isinstance(last_msg, list) else str(last_msg)
+            last_msg_content[0].get("text", "")
+            if isinstance(last_msg_content, list)
+            else str(last_msg_content)
         ).strip()
 
-        # Phase 1: Parsing & Validation
         parsed = self._parse_trigger(txt)
 
         if not parsed:
             return body
 
-        # Phase 2: Initialization
+        # Phase 3: Initialization
         self.output_content = ""
         self.ctx = ConfigService(self)
         self.debug, self.em = (
             DebugService(self),
             EmitterService(__event_emitter__, self),
         )
+        self.files = FileService(self.debug)
 
         await self.em.emit_status("🚀 EasyBrief Started", False)
 
-        # Phase 3: State Management
+        if has_attachments:
+            self.debug.log(
+                f"📎 Attachments detected! (Msg: {len(msg_files)}, Root: {len(root_files)}, Meta: {len(meta_files)})"
+            )
+
+        # Phase 4: State Management
         self.ctx.model.web_search_original = body.get("features", {}).get(
             "web_search", False
         )
         self.ctx.model.forced_language = parsed["lang"]
-
-        # FIX: Save brief state for outlet decision
         self.ctx.model.is_brief = parsed["is_brief"]
 
         content = parsed["content"]
 
+        # Extraction Logic (RAG Bypass)
+        extracted_context = ""
+        if has_attachments:
+            self.debug.log(f"📎 Files detected. Starting Direct Injection...")
+            await self.em.emit_status("📂 Reading files directly..", False)
+
+            full_text = []
+            processed_paths = set()
+
+            # Combine all sources
+            all_files = msg_files
+
+            for f in all_files:
+                f_data = f.get("file", {})
+                f_path = f_data.get("path")
+
+                if f_path and f_path not in processed_paths:
+                    processed_paths.add(f_path)
+                    f_type = f_data.get("meta", {}).get("content_type", "")
+
+                    text = self.files.extract_text(f_path, f_type)
+                    if text:
+                        full_text.append(
+                            f"\n=== FILE: {f_data.get('name', 'Unknown')} ===\n{text}"
+                        )
+
+            if full_text:
+                extracted_context = "\n".join(full_text)
+
+                # --- DEBUG AUDIT START ---
+                # Calcola e stampa le metriche reali dell'input
+                word_count = len(extracted_context.split())
+                self.debug.log(
+                    f"📄 INPUT SIZE: {len(extracted_context)} chars | ~{word_count} words"
+                )
+
+                # Stampa l'inizio e la fine per verificare che il file sia completo
+                preview_len = 500
+                head = extracted_context[:preview_len].replace("\n", " ")
+                tail = extracted_context[-preview_len:].replace("\n", " ")
+                self.debug.log(f"📄 HEAD: {head}...")
+                self.debug.log(f"📄 TAIL: ...{tail}")
+                # --- DEBUG AUDIT END ---
+
+                self.debug.log(
+                    f"Extracted {len(extracted_context)} chars. Disabling RAG."
+                )
+
+                # CRITICAL: Nuke file keys to bypass RAG
+                if "files" in body:
+                    del body["files"]
+                if "files" in last_msg_obj:
+                    del last_msg_obj["files"]
+                if "metadata" in body and "files" in body["metadata"]:
+                    del body["metadata"]["files"]
+
         # Handle Contextual/Empty Triggers
-        if not content and len(msg_list) > 1:
+        if not content and not has_attachments and len(msg_list) > 1:
             prev_content = msg_list[-2].get("content", "")
             content = (
                 prev_content[0].get("text", "")
@@ -680,44 +862,35 @@ class Filter:
             if EB_WATERMARK in content:
                 self.debug.log("🌊 Recursive Brief detected: Input contains Watermark.")
 
-            self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
-
-            # CRITICAL FIX: Extract Search Query if search is requested on context
             if parsed["is_search"]:
                 await self.em.emit_status("⛏️ Extracting Search Query..", False)
-                # Pass parsed["lang"] to force query translation if needed
                 content = await self._extract_query(
                     content, body.get("model"), __user__["id"], parsed["lang"]
                 )
                 self.debug.log(f"Extracted Query: {content}")
                 await self.em.emit_status(f"🔍 Searching: {content[:60]}...", False)
 
-        # Check Minimum Input Threshold (Renamed from min_brief_words)
-        # Managed by Admin Valves
+        # Minimum Input Threshold
         min_threshold = self.valves.min_input_threshold
-
         if (
             parsed["is_brief"]
             and not parsed["is_search"]
+            and not extracted_context
             and len(content.split()) < min_threshold
         ):
-            self.debug.log(
-                f"Skipping Brief: content too short ({len(content.split())} < {min_threshold} words)."
-            )
+            self.debug.log(f"Skipping Brief: content too short.")
             await self.em.emit_status("💬 Input too short for Brief", True)
-
             if body["messages"]:
                 body["messages"][-1]["content"] = content
-
             return body
 
         self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
 
         try:
-            # Apply Web Search Override logic
+            # Apply Web Search Override
             self.ctx.model.override_web_search = parsed["is_search"]
 
-            # PREPARE LANGUAGE INSTRUCTION (Robust Logic)
+            # PREPARE LANGUAGE INSTRUCTION
             if parsed["lang"]:
                 target_lang = parsed["lang"].upper()
                 lang_instruction = (
@@ -726,138 +899,159 @@ class Filter:
                     f"   - MANDATORY: Write the ENTIRE response in {target_lang}."
                 )
             else:
-                # FIX: Remove negative logic ("FORBIDDEN") which confuses 12B models.
-                # Use positive reinforcement for English retention.
                 lang_instruction = (
                     "- DETECT the language of the '=== INPUT TO PROCESS ===' below.\n"
                     "- MANDATORY: Respond in the EXACT SAME language as the detected input.\n"
                     "- CRITICAL: If the input is in English, you MUST respond in English."
                 )
 
-            # Decision Logic: Quick Search vs Briefing
+            # --- DECISION LOGIC ---
             if parsed["is_brief"]:
 
-                # Check if a specific task model is requested via UserValves
+                # Task Model Swap
                 target_model = self.user_valves.task_model
                 current_model = body.get("model")
-
                 if target_model and target_model != current_model:
                     self.debug.log(f"Swapping model: {current_model} -> {target_model}")
                     self.ctx.model.original_model = current_model
                     body["model"] = target_model
 
-                # SMART NANO LOGIC (Absolute Threshold per User Request)
-                # Calculate word count of the actual input (Cleaning <think> blocks)
+                # Smart Nano Logic
                 clean_content = re.sub(
                     r"<think>.*?</think>", "", content, flags=re.DOTALL
                 ).strip()
                 input_words = len(clean_content.split())
                 smart_threshold = self.user_valves.smart_nano_threshold
 
-                # State variables
-                user_wants_nano = False
-                explicit_mode = parsed[
-                    "target_mode"
-                ]  # rich, schematic, table, nano, or None
+                user_wants_nano = (
+                    parsed["target_mode"] == "nano" or EB_WATERMARK in content
+                )
 
-                # Resolve Modes
-                if explicit_mode == "nano":
-                    user_wants_nano = True
-                elif EB_WATERMARK in content:
-                    user_wants_nano = True
-
-                # Logic: Smart switch only if mode is None (implicit >>) AND text is short
+                # Disable Smart Nano if files are attached
                 force_smart_nano = (
                     not parsed["is_search"]
+                    and not extracted_context
                     and input_words < smart_threshold
                     and smart_threshold > 0
-                    and explicit_mode is None
+                    and parsed["target_mode"] is None
                     and not user_wants_nano
                 )
 
-                if user_wants_nano or force_smart_nano:
+                # DYNAMIC LENGTHS
+                ov_len = self.user_valves.overview_length
+                syn_len = self.user_valves.synthesis_length
+                ana_len = self.user_valves.analysis_length
 
-                    # Calculate Dynamic Length
-                    # If forced by smart logic, use 70% of input length to stay tight
+                if extracted_context:
+                    ov_len = "comprehensive executive summary (300-500 words)"
+                    syn_len = "detailed breakdown (no word limit, extract key data)"
+                    ana_len = "in-depth technical analysis"
+                    if user_wants_nano:
+                        user_wants_nano = False
+                        parsed["target_mode"] = "rich"
+
+                if user_wants_nano or force_smart_nano:
+                    # NANO MODE
                     if force_smart_nano:
                         calc_len = int(input_words * AUTO_NANO_BRIEF_COMPRESSION)
                         target_len = max(50, calc_len)
                         await self.em.emit_status(
-                            f"💬 Input too short ({input_words}w)"
+                            f"💬 Input too short. Auto-Nano ({target_len}w).."
                         )
-                        status_msg = f"✨ Falling back to Nano Brief ({target_len}w).."
                     else:
                         target_len = self.user_valves.max_nano_brief_length
-                        status_msg = "✨ Generating a Nano Brief.."
-
-                    self.debug.log(
-                        f"Nano Mode Active. Forced: {force_smart_nano}. Target Words: {target_len}"
-                    )
+                        await self.em.emit_status("✨ Generating a Nano Brief..")
 
                     selected_prompt = NANO_PROMPT.format(
                         NANO_LENGTH=target_len, LANGUAGE_INSTRUCTION=lang_instruction
                     )
-                    await self.em.emit_status(status_msg, False)
-
                 else:
-                    # 2. Rich/Schematic/Table Mode
+                    # RICH / SCHEMATIC / TABLE MODE
+                    final_mode = (
+                        parsed["target_mode"] or self.user_valves.default_brief_mode
+                    )
+                    if final_mode == "simple":
+                        final_mode = "table"
 
-                    # Resolve Final Mode (Default Fallback)
-                    final_mode = explicit_mode
-                    if final_mode is None:
-                        final_mode = self.user_valves.default_brief_mode
-                        # Remap deprecated 'simple' to 'table' in user config just in case
-                        if final_mode == "simple":
-                            final_mode = "table"
-
-                    # Select Prompt
                     if final_mode == "schematic":
-                        base_prompt = SCHEMATIC_PROMPT.format(
-                            MERMAID_EXAMPLES=MERMAID_EXAMPLES,
-                            LANGUAGE_INSTRUCTION=lang_instruction,
-                        )
+                        base_prompt = SCHEMATIC_PROMPT
                         status_label = "Schematic Brief"
                     elif final_mode == "table":
-                        base_prompt = TABLE_PROMPT.format(
-                            LANGUAGE_INSTRUCTION=lang_instruction
-                        )
+                        base_prompt = TABLE_PROMPT
                         status_label = "Table Brief"
                     else:
-                        # Rich Brief (Default)
-                        base_prompt = BRIEF_PROMPT.format(
-                            OVERVIEW_LENGTH=self.user_valves.overview_length,
-                            SYNTESYS_LENGTH=self.user_valves.synthesis_length,
-                            ANALYSYS_LENGTH=self.user_valves.analysis_length,
+                        base_prompt = BRIEF_PROMPT
+                        status_label = "Rich Brief"
+
+                    # Format the prompt
+                    if final_mode == "rich":
+                        selected_prompt = base_prompt.format(
+                            OVERVIEW_LENGTH=ov_len,
+                            SYNTESYS_LENGTH=syn_len,
+                            ANALYSYS_LENGTH=ana_len,
                             LANGUAGE_INSTRUCTION=lang_instruction,
                             MERMAID_EXAMPLES=MERMAID_EXAMPLES,
                         )
-                        status_label = "Rich Brief"
+                    elif final_mode == "schematic":
+                        selected_prompt = base_prompt.format(
+                            MERMAID_EXAMPLES=MERMAID_EXAMPLES,
+                            LANGUAGE_INSTRUCTION=lang_instruction,
+                        )
+                    else:
+                        selected_prompt = base_prompt.format(
+                            LANGUAGE_INSTRUCTION=lang_instruction
+                        )
 
                     await self.em.emit_status(
                         f"✨ Generating a {status_label}..", False
                     )
 
-                    selected_prompt = base_prompt
+                # --- PROMPT INJECTION (Split Strategy) ---
 
-                data_content = (
-                    f"Search Query: {content}" if parsed["is_search"] else content
-                )
-
-                # Fallback instruction for small models if no lang specified
                 fallback_instr = ""
                 if not parsed["lang"]:
-                    fallback_instr = "If ambiguous or mixed, default to ENGLISH."
+                    fallback_instr = (
+                        "If ambiguous, detect language from the input text below."
+                    )
 
-                instr = (
-                    f"{selected_prompt}\n\n"
-                    f"=== INPUT TO PROCESS ===\n"
-                    f"{data_content}\n"
-                    f"=== END INPUT TO PROCESS ===\n\n"
-                    f"{fallback_instr}"
-                )
+                if extracted_context:
+                    # [FIX v0.5.6] REINFORCEMENT LEARNING FOR LARGE DOCS
+                    # 1. System: The Laws (Template & Rules)
+                    system_payload = (
+                        f"ROLE: Executive Analyst.\n{selected_prompt}\n{fallback_instr}"
+                    )
+
+                    # 2. User: The Data + The Sandwich (Reminder at the end)
+                    doc_lang_reinforcement = (
+                        f"MANDATORY: Respond in {parsed['lang'].upper()}."
+                        if parsed["lang"]
+                        else "MANDATORY: Detect the language of the document above and RESPOND IN THE SAME LANGUAGE."
+                    )
+
+                    user_payload = (
+                        f"=== INPUT DOCUMENT ===\n{extracted_context}\n=== END INPUT ===\n\n"
+                        f"⚠️ FINAL INSTRUCTION - ADHERENCE CHECK ⚠️\n"
+                        f"1. {doc_lang_reinforcement}\n"
+                        f"2. You MUST follow the structure defined in the System Prompt (Overview -> Mermaid -> Synthesis).\n"
+                        f"3. STRICTLY NO BULLET LISTS: Use Markdown TABLES for all lists.\n"
+                        f'4. MERMAID SYNTAX: Always use double quotes for labels (e.g. A["Label"]).\n'
+                        f"\n{MERMAID_EXAMPLES}"  # Reinject examples for context retention
+                    )
+
+                    instr = f"{system_payload}\n\n{user_payload}"  # Legacy fallback
+                else:
+                    input_header = "=== INPUT TO PROCESS ==="
+                    instr = (
+                        f"{selected_prompt}\n\n"
+                        f"{input_header}\n"
+                        f"{content}\n"
+                        f"=== END INPUT ===\n\n"
+                        f"{fallback_instr}"
+                    )
+                    system_payload = None
 
             else:
-                # Trigger '??' (Quick Search) mode
+                # [SEARCH MODE] ('??')
                 simple_lang_instr = (
                     f"*** REQUIRED OUTPUT LANGUAGE: {parsed['lang'].upper()} ***"
                     if parsed["lang"]
@@ -866,23 +1060,27 @@ class Filter:
                 instr = (
                     f"Search Query: {content}\n\n"
                     f"INSTRUCTION: Answer the query above using ONLY the provided search results/context. "
-                    f"Do not hallucinate or use prior conversation memory if unrelated.\n\n"
+                    f"Do not hallucinate.\n\n"
                     f"{simple_lang_instr}"
                 )
+                system_payload = None
 
             body["messages"][-1]["content"] = instr
 
-            # We must wipe history for:
-            # 1. Briefs (>>) -> Always fresh analysis
-            # 2. Explicit Search (?? query) -> Prevent context bleeding/hallucination from previous turns
-            # We ONLY keep history if it's a Contextual Search (?? without query) acting on previous msg
+            # --- ISOLATION LOGIC ---
             is_explicit_search = parsed["is_search"] and len(content.strip()) > 0
 
             if parsed["is_brief"] or is_explicit_search:
-                # Standard Isolation: Keep only the current instruction
-                current_instr = body["messages"][-1]["content"]
-                body["messages"] = [{"role": "user", "content": current_instr}]
-                self.debug.log("History wiped: Isolation Mode active.")
+                if parsed["is_brief"] and system_payload:
+                    # [FIX v0.5.5] Use explicit System Role for strict adherence
+                    body["messages"] = [
+                        {"role": "system", "content": system_payload},
+                        {"role": "user", "content": user_payload},
+                    ]
+                    self.debug.log("History wiped: System+User split active.")
+                else:
+                    body["messages"] = [{"role": "user", "content": instr}]
+                    self.debug.log("Text Mode: History wiped.")
 
             if self.ctx.model.override_web_search is not None:
                 if "features" not in body:
