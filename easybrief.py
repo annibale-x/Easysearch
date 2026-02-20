@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.2
+version: 0.4.3
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field, validator
 from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
+
+# TODO: Nel schematic brief il prompt tende a buttare sche mi e mindmap in fondo alle tabelle, con contenuti già rappresentati in tabella, biogna dire al modello di privilegiare i diagrammi e non ridondare le tabelle
 
 
 # --- CONSTANTS ---
@@ -777,7 +779,10 @@ class Filter:
                     if force_smart_nano:
                         calc_len = int(input_words * AUTO_NANO_BRIEF_COMPRESSION)
                         target_len = max(50, calc_len)
-                        status_msg = f"💬 Input too short ({input_words}w). Auto-Nano ({target_len}w).."
+                        await self.em.emit_status(
+                            f"💬 Input too short ({input_words}w)"
+                        )
+                        status_msg = f"✨ Falling back to Nano Brief ({target_len}w).."
                     else:
                         target_len = self.user_valves.max_nano_brief_length
                         status_msg = "✨ Generating a Nano Brief.."
