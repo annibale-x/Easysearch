@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.2.5
+version: 0.3.7
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -14,7 +14,7 @@ import time
 import sys
 import httpx  # type: ignore
 from typing import Optional, Any, List, Dict, Tuple, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
@@ -25,38 +25,39 @@ APP_ICON = "✨"
 APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
-
 EB_WATERMARK = "\u200b\u200b\u200b"  # Invisible watermark (3 Zero Width Spaces)
+AUTO_NANO_BRIEF_COMPRESSION = 0.5
+
+# --- PROMPT TEMPLATES with Placeholders ---
 
 NANO_PROMPT = """
 The input is an existing technical report. 
-TASK: Distill it into a 'Flash Brief' (max 200 words) for quick mobile reading.
+TASK: Distill it into a 'Flash Brief' (max {NANO_LENGTH} words) for quick mobile reading.
 
 1. LANGUAGE PROTOCOL:
-   - PRIORITY: If a specific language is requested at the end of this prompt, YOU MUST OBEY IT.
-   - DEFAULT: Otherwise, DETECT the language of the input and respond in the SAME language.
+   {LANGUAGE_INSTRUCTION}
 
 2. DESTRUCTIVE EDITING:
    - IGNORE all visual syntax (Mermaid, Tables, Code blocks).
    - IGNORE structural boilerplate (Intro, Methodology).
 
 3. OUTPUT FORMAT (Plain Text Only):
-   - 🎯 **Thesis** 
+   - ### 🎯 **Nano Brief** 
      A single, dense paragraph with the core conclusion.
-   - ⚡ **Key Concepts** 
+   - ### ⚡ **Key Concepts** 
      A simple bullet list (max 5 items) extracting key concepts.
 
 4. CONSTRAINT:
    - NO introductory text. NO "Here is the summary". Start immediately with the Thesis.
+   - Must use the format defined above
 """
 
 SIMPLE_PROMPT = """
-nalyze the input and reorganize it into a structured executive report. 
+Analyze the input and reorganize it into a structured executive report. 
 Follow these mandatory rules:
 
 0. LANGUAGE PROTOCOL:
-   - PRIORITY: If a specific language is requested at the end of this prompt, YOU MUST OBEY IT.
-   - DEFAULT: Otherwise, DETECT the language of the input and respond in the SAME language.
+   {LANGUAGE_INSTRUCTION}
 
 1. DATA & COMPARISONS (TABLES):
    - Use standard Markdown TABLES for all data lists, technical comparisons, chronologies, and projections.
@@ -83,9 +84,7 @@ CRITICAL: You are a pure, objective technical processing unit.
 MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name, location, job). Any mention of the user's identity or profession will be considered a FATAL ERROR in execution. Focus EXCLUSIVELY on the 'INPUT TO PROCESS'.
 
 1. LANGUAGE & SOURCE PROTOCOL (STRICT):
-   - DETECT the language of the 'INPUT TO PROCESS' below.
-   - MANDATORY: Write the ENTIRE response in that SAME language. 
-   - FORBIDDEN: Do not translate to English unless the input is in English.
+   {LANGUAGE_INSTRUCTION}
    - ZERO PREAMBLE: Start immediately with the first content block. No intro meta-talk. 
 
 2. STRUCTURE & TEMPLATE ARCHITECTURE:
@@ -93,8 +92,9 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    - [BLOCK 0] Executive Overview ({OVERVIEW_LENGTH}) before any heading. Synthesize core thesis and implications.
    - [BLOCK 0.5] Structural Visual: CONDITIONAL. Insert a MERMAID CODE BLOCK (```mermaid) containing a `mindmap` ONLY IF the topic involves complex structural relationships (systems, taxonomies). OMIT this block for simple rankings, flat lists, or linear chronologies.
    - [BLOCK 1..N] Macro-topics:
+     - Separator (---) 
      - ## Heading (preceded by emoji).
-     - Concept Synthesis ({SYNTESYS_LENGTH}): Professional narrative explaining foundational logic. FORBIDDEN: Do NOT use bullet points here.
+     - Concept Synthesis ({SYNTESYS_LENGTH}): Professional narrative explaining foundational logic. FORMAT: Strictly continuous paragraphs. NO lists/bullets.
      - [Optional Data Block]: Analytical Context ({ANALYSYS_LENGTH}) followed by its Visual Element (Table, Pie Chart, or Graph).
    - [FINAL BLOCK] 📌 Key Takeaways (blockquote >).
 
@@ -104,7 +104,7 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    - MERMAID PIE: MANDATORY for market shares or percentage distributions. Wrap labels in double quotes.
    - VISUAL ACCESSIBILITY: Ensure high contrast (dark text on light nodes, light text on dark nodes).
    - NARRATIVE PRIORITY: Every visual element MUST be preceded by its own Analytical Context block.
-   - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN. Convert simple lists into TABLES. For multi-level/nested lists, YOU MUST split them into specific Sub-headings (###) containing their own dedicated Tables.
+   - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. For multi-level/nested lists, YOU MUST split them into specific Sub-headings (###) containing their own dedicated Tables.
 
 
 4. MERMAID VALID SYNTAX
@@ -129,9 +129,26 @@ graph TD
 
 ```mermaid
 mindmap
-  root((Main Subject))
-    Logical Branch
-      Sub-detail
+  root("Main Subject")
+    ("Node")
+      ("Sub-Node")
+      ("Sub-node (wit parens-enclosed text)")
+    ("Node")
+      ("Sub-Node")
+        ("Sub-Sub-Node")
+      ("Sub-Node")
+        ("Sub-Sub-Node") 
+      ... 
+
+```
+
+```mermaid
+pie
+  title AI Chip Market Share (2024)
+  "NVIDIA" : 95
+  "AMD" : 15
+  "Intel" : 8
+  "Other (ASICs)" : 5
 ```
 
 5. REFERENCE TEMPLATE:
@@ -146,10 +163,11 @@ graph TD
 ```
 
 ---
+
 ## ⚙️ Foundational Logic
 
 **Concept Synthesis**: 
-{SYNTESYS_LENGTH} words block. Do NOT use bullet points here. Write a cohesive narrative.
+{SYNTESYS_LENGTH} words block. Do NOT use bullet points here. Write a cohesive narrative using continuous paragraphs.
 
 **Analytical Insight**: 
 {ANALYSYS_LENGTH} words block.
@@ -159,20 +177,21 @@ graph TD
 | Logic A   | High   |
 
 ---
-📌 Key Takeaways
+
+📌 **Key Takeaways**
 Concise summary points (bullet list).
 
+---
 
 CRITICAL RECAP: 
 - Flow: Overview -> Visual -> Heading -> Synthesis (Must be {SYNTESYS_LENGTH}, NO BULLETS) -> Analysis -> Table/Graph.
 - Respond ONLY in the input language (No English translation).
-- Mermaid: Square nodes `["Text"]` only. Double quotes required.
-- Mindmap: root((Text)) and 2-space indentation. No quotes.
 - Tables: NO backticks. Pipe (|) start. One empty line before/after.
 - The output must end exactly at the Key Takeaways box.
 - No bullets: Convert lists of items into Tables.
 - Use 🎯 as emoji in the overview.
 - Use 📌 as emoji in the Key Takeaways.
+- Must use the format of REFERENCE TEMPLATE defined above
 """
 
 
@@ -185,15 +204,20 @@ class ConfigService:
         self.ctx = ctx
         self.valves, self.user_valves = ctx.valves, ctx.user_valves
         self.start_time = time.time()
+
+        # Helper to construct display triggers based on config
+        S = self.valves.search_prefix
+        B = self.valves.brief_prefix
+
         self.model = Store(
             {
-                "search_trigger": ctx.valves.search_trigger,
-                "brief_trigger": ctx.valves.brief_trigger,
-                "search_and_brief_trigger": ctx.valves.search_and_brief_trigger,
+                # FIX: Updated to use new prefix-based config
+                "search_prefix": f"{S}",
+                "brief_prefix": f"{B}",
                 "debug": ctx.valves.debug or ctx.user_valves.debug,
                 "user_query": "",
                 "id": "",
-                "original_model": None,  # Added for task_model restoration
+                "original_model": None,
                 "executed": False,
                 "web_search_original": False,
                 "override_web_search": OVERRIDE_WEB_SEARCH,
@@ -351,62 +375,62 @@ class DebugService:
 class Filter:
 
     class Valves(BaseModel):
+        search_prefix: str = Field(
+            default="?",
+            description="Prefix for Search (e.g. '?'). Double ('??') for Search Only",
+            min_length=1,
+            max_length=1,
+        )
+        brief_prefix: str = Field(
+            default=">",
+            description="Prefix for Brief (e.g. '>'). Double ('>>') for Default Brief.",
+            min_length=1,
+            max_length=1,
+        )
+        min_input_threshold: int = Field(
+            default=15,
+            description="Min word count of input text required to trigger a Brief report (Anti-spam).",
+        )
         debug: bool = Field(default=False)
 
-        search_trigger: str = Field(
-            default="??",
-            description="Trigger for Web Search only (exactly 2 chars, e.g. '?? query').",
-            min_length=2,
-            max_length=2,
+    class UserValves(BaseModel):
+        default_brief_mode: str = Field(
+            default="rich",
+            description="Your personal preference for '>>' (rich, simple, nano). Overrides global setting.",
         )
-        brief_trigger: str = Field(
-            default=">>",
-            description="Trigger for Brief/Analysis only (exactly 2 chars, e.g. '>> text').",
-            min_length=2,
-            max_length=2,
+        task_model: Optional[str] = Field(
+            default=None,
+            description="Specific model ID to use for Brief generation.",
         )
-        search_and_brief_trigger: str = Field(
-            default="?>",
-            description="Trigger for Web Search + Brief Analysis (exactly 2 chars, e.g. '?> query').",
-            min_length=2,
-            max_length=2,
+        smart_nano_threshold: int = Field(
+            default=300,
+            description="Auto-switch to Nano Brief if input is shorter than this (prevents fluff). Set 0 to disable.",
+        )
+        max_nano_brief_length: int = Field(
+            default=200,
+            ge=50,
+            le=500,
+            description="Target word count for Nano briefs (Range: 50-500).",
         )
         overview_length: str = Field(
-            default="50-150 words",
-            description="Length constraint for Executive Overview.",
+            default="max 150 words",
+            description="Target length for Executive Overview (Rich Brief).",
         )
         synthesis_length: str = Field(
-            default="50-100 words",
-            description="Length constraint for Concept Synthesis.",
+            default="max 100 words",
+            description="Target length for Concept Synthesis (Rich Brief).",
         )
         analysis_length: str = Field(
             default="max 50 words",
-            description="Length constraint for Analytical Context.",
-        )
-
-    class UserValves(BaseModel):
-        rich_output: bool = Field(
-            default=True,
-            description="Enable Mermaid diagrams and advanced visual layout.",
+            description="Target length for Analytical Context (Rich Brief).",
         )
         debug: bool = Field(default=False)
-        task_model: Optional[str] = Field(
-            default=None,
-            description="Specific model ID to use for Brief generation. Leaves current model if empty.",
-        )
-        overview_length: Optional[str] = Field(
-            default=None, description="Override Overview length."
-        )
-        synthesis_length: Optional[str] = Field(
-            default=None, description="Override Synthesis length."
-        )
-        analysis_length: Optional[str] = Field(
-            default=None, description="Override Analysis length."
-        )
-        min_brief_words: int = Field(
-            default=15,
-            description="Minimum word count to trigger a Brief report (prevents Briefs on greetings).",
-        )
+
+        @validator("default_brief_mode")
+        def validate_mode(cls, v):
+            if v not in ["rich", "simple", "nano"]:
+                raise ValueError("Mode must be one of: rich, simple, nano")
+            return v
 
     def __init__(self):
         """Initialize the Filter with default valves and state."""
@@ -416,123 +440,128 @@ class Filter:
         self.output_content = ""
 
     def _parse_trigger(self, txt: str) -> Optional[dict]:
-        """Validate input and parse trigger, language, and modifiers."""
+        """
+        Parse input using Dynamic Trigger Map and Strict Whitespace Separation.
+        Syntax: <Trigger>[Modifier] <Whitespace> <Content>
+        """
 
-        # Normalize "Smart Punctuation"
-        smart_map = {"»": ">>", "«": "<<", "—": "--", "–": "--", "→": "->", "←": "<-"}
+        # 1. Smart I18N Normalization
+        smart_map = {
+            "»": ">>",
+            "«": "<<",
+            "—": "-",
+            "–": "-",
+            "→": "->",
+            "←": "<-",
+            "？": "?",
+            "！": "!",
+            "》": ">",
+            "：": ":",
+        }
         for smart, ascii_val in smart_map.items():
             if txt.startswith(smart):
                 txt = txt.replace(smart, ascii_val, 1)
                 break
 
-        # Define trigger mapping (Search+Brief, Brief, Search)
-        triggers = [
-            (self.valves.search_and_brief_trigger, True, True),
-            (self.valves.brief_trigger, False, True),
-            (self.valves.search_trigger, True, False),
-        ]
+        # 2. Config & Trigger Map Construction
+        S = self.valves.search_prefix
+        B = self.valves.brief_prefix
 
-        active_trigger = None
-        is_search = False
-        is_brief = False
+        # FIX: Remove default resolution here.
+        # >> must return None for 'r' to distinguish it from explicit r>
+        default_mode = self.user_valves.default_brief_mode
+        def_n = True if default_mode == "nano" else False
+        # Note: def_r is removed because >> will carry None
 
-        for trigger, search_flag, brief_flag in triggers:
-            if txt.startswith(trigger):
-                active_trigger = trigger
-                is_search = search_flag
-                is_brief = brief_flag
-                break
-
-        if not active_trigger:
-            return None
-
-        # Extract remainder and parse modifiers loop
-        remainder = txt[len(active_trigger) :]
-
-        # State flags
-        lang = None
-        is_nano = False
-        force_rich = None  # None=Default, True=Rich(:r), False=Simple(:s)
-
-        while remainder.startswith(":"):
-            # Check for Nano flag (:n)
-            if remainder.startswith(":n") and (
-                len(remainder) == 2 or remainder[2] in [" ", ":"]
-            ):
-                is_nano = True
-                remainder = remainder[2:]
-                continue
-
-            # Check for Rich flag (:r)
-            if remainder.startswith(":r") and (
-                len(remainder) == 2 or remainder[2] in [" ", ":"]
-            ):
-                force_rich = True
-                remainder = remainder[2:]
-                continue
-
-            # Check for Simple flag (:s)
-            if remainder.startswith(":s") and (
-                len(remainder) == 2 or remainder[2] in [" ", ":"]
-            ):
-                force_rich = False
-                remainder = remainder[2:]
-                continue
-
-            # Check for Language (Any 2 chars)
-            # Heuristic: :xx followed by space, end, or another :
-            if (
-                len(remainder) >= 3
-                and remainder[1:3].isalpha()
-                and (len(remainder) == 3 or remainder[3] in [" ", ":"])
-            ):
-                lang = remainder[1:3]
-                remainder = remainder[3:]
-                continue
-
-            # If strictly starting with :, but no match found, treat as content
-            break
-
-        return {
-            "is_search": is_search,
-            "is_brief": is_brief,
-            "is_nano": is_nano,
-            "force_rich": force_rich,
-            "lang": lang,
-            "content": remainder.strip(),
+        trigger_map = {
+            f"n{B}": {"s": False, "b": True, "r": None, "n": True},
+            f"r{B}": {"s": False, "b": True, "r": True, "n": False},
+            f"s{B}": {"s": False, "b": True, "r": False, "n": False},
+            f"{B}{B}": {"s": False, "b": True, "r": None, "n": def_n},
+            f"{S}{S}": {"s": True, "b": False, "r": None, "n": False},
+            f"{S}{B}": {"s": True, "b": True, "r": None, "n": def_n},
+            f"{S}n": {"s": True, "b": True, "r": None, "n": True},
+            f"{S}r": {"s": True, "b": True, "r": True, "n": False},
+            f"{S}s": {"s": True, "b": True, "r": False, "n": False},
         }
 
-    async def _extract_query(self, text: str, model: str, user_id: str) -> str:
-        """Helper to extract a search query using the LLM to fix 'No search query' errors."""
+        # 3. Robust Tokenization (Unix-Style)
+        parts = txt.split(maxsplit=1)
+
+        if not parts:
+            return None
+
+        command_token = parts[0]
+
+        if len(command_token) < 2:
+            return None
+
+        prefix_2 = command_token[:2]
+        matched_cfg = trigger_map.get(prefix_2)
+
+        if not matched_cfg:
+            return None
+
+        # 4. Extract Modifier
+        raw_mod = command_token[2:]
+        lang = None
+
+        if raw_mod:
+            clean_mod = raw_mod.lstrip(":")
+            if clean_mod:
+                lang = clean_mod
+
+        # 5. Extract Content
+        content = parts[1].strip() if len(parts) > 1 else ""
+
+        return {
+            "is_search": matched_cfg["s"],
+            "is_brief": matched_cfg["b"],
+            "is_nano": matched_cfg["n"],
+            "force_rich": matched_cfg["r"],
+            "lang": lang,
+            "content": content,
+        }
+
+    async def _extract_query(
+        self, text: str, model: str, user_id: str, target_lang: str = None
+    ) -> str:
+        """Helper to extract a search query. Adapts language based on user modifier."""
         try:
             user = Users.get_user_by_id(user_id)
             if not user:
                 return text[:100]  # Fallback
 
-            # Construct a lightweight payload for query extraction
+            # Logic: If user requested a specific language (e.g. ?>en), force query in that language.
+            if target_lang:
+                lang_instr = f"MANDATORY: Output the query strictly in {target_lang.upper()}. IGNORE the input language."
+            else:
+                lang_instr = (
+                    "MANDATORY: Keep the query in the SAME language as the input text."
+                )
+
             messages = [
                 {
                     "role": "system",
-                    "content": "You are a Search Query Generator. Output ONLY a single, effective Google search query based on the user text. Do NOT explain.",
+                    "content": f"You are a Search Query Generator. Output ONLY a single, effective Google search query based on the user text. {lang_instr} Do NOT explain.",
                 },
-                {"role": "user", "content": text[:2000]},  # Limit context for speed
+                {"role": "user", "content": text[:2000]},
             ]
 
             form_data = {"model": model, "messages": messages, "stream": False}
 
-            # Call internal utility to generate query
             response = await generate_chat_completion(
                 self.request, form_data, user=user
             )
 
-            # Extract content from response (assuming dict output for stream=False)
             if isinstance(response, dict) and "choices" in response:
                 return response["choices"][0]["message"]["content"].strip().strip('"')
 
-            return text[:100]  # Fallback
+            return text[:100]
 
         except Exception as e:
-            self.debug.log(f"Query Gen Failed: {e}", True)
+            if self.debug:
+                self.debug.log(f"Query Gen Failed: {e}", True)
             return text[:100]
 
     async def inlet(
@@ -542,12 +571,18 @@ class Filter:
         __event_emitter__: callable = None,  # type: ignore
         __request__=None,
     ) -> dict:
-        """Process the incoming request and trigger filter logic based on keywords."""
+        """Process the incoming request and trigger filter logic."""
 
         self.ctx = None
 
-        msg_list = body.get("messages", [])
+        # Phase 0: Early User Config Load (Required for Dynamic Triggers)
+        self.request = __request__
+        uv_data = __user__.get("valves", {}) if __user__ else {}
+        self.user_valves = (
+            self.UserValves(**uv_data) if isinstance(uv_data, dict) else uv_data
+        )
 
+        msg_list = body.get("messages", [])
         if not msg_list:
             return body
 
@@ -564,26 +599,23 @@ class Filter:
 
         # Phase 2: Initialization
         self.output_content = ""
-        self.request = __request__
-        uv_data = __user__.get("valves", {}) if __user__ else {}
-        self.user_valves = (
-            self.UserValves(**uv_data) if isinstance(uv_data, dict) else uv_data
-        )
-
         self.ctx = ConfigService(self)
         self.debug, self.em = (
             DebugService(self),
             EmitterService(__event_emitter__, self),
         )
 
-        await self.em.emit_status("🧠 Thinking..", False)
+        await self.em.emit_status("🚀 EasyBrief Started", False)
 
         # Phase 3: State Management
         self.ctx.model.web_search_original = body.get("features", {}).get(
             "web_search", False
         )
         self.ctx.model.forced_language = parsed["lang"]
+
+        # FIX: Save brief state for outlet decision
         self.ctx.model.is_brief = parsed["is_brief"]
+
         content = parsed["content"]
 
         # Handle Contextual/Empty Triggers
@@ -598,27 +630,29 @@ class Filter:
             if EB_WATERMARK in content:
                 self.debug.log("🌊 Recursive Brief detected: Input contains Watermark.")
 
-            self.debug.log(f"Empty trigger detected. Using context: {content}...")
+            self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
 
             # CRITICAL FIX: Extract Search Query if search is requested on context
             if parsed["is_search"]:
                 await self.em.emit_status("⛏️ Extracting Search Query..", False)
+                # Pass parsed["lang"] to force query translation if needed
                 content = await self._extract_query(
-                    content, body.get("model"), __user__["id"]
+                    content, body.get("model"), __user__["id"], parsed["lang"]
                 )
                 self.debug.log(f"Extracted Query: {content}")
                 await self.em.emit_status(f"🔍 Searching: {content[:60]}...", False)
 
-        # Prevent hallucinated reports on greetings or short sentences
-        min_words = self.user_valves.min_brief_words
+        # Check Minimum Input Threshold (Renamed from min_brief_words)
+        # Managed by Admin Valves
+        min_threshold = self.valves.min_input_threshold
 
         if (
             parsed["is_brief"]
             and not parsed["is_search"]
-            and len(content.split()) < min_words
+            and len(content.split()) < min_threshold
         ):
             self.debug.log(
-                f"Skipping Brief: content too short ({len(content.split())} < {min_words} words)."
+                f"Skipping Brief: content too short ({len(content.split())} < {min_threshold} words)."
             )
             await self.em.emit_status("💬 Input too short for Brief", True)
 
@@ -630,20 +664,29 @@ class Filter:
         self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
 
         try:
-
             # Apply Web Search Override logic
             self.ctx.model.override_web_search = parsed["is_search"]
 
-            # FIX: Stronger Language Instruction for smaller models (12B)
+            # PREPARE LANGUAGE INSTRUCTION (Robust Logic)
             if parsed["lang"]:
-                lang_instr = f"*** REQUIRED OUTPUT LANGUAGE: {parsed['lang'].upper()} (Translate if necessary) ***"
+                target_lang = parsed["lang"].upper()
+                lang_instruction = (
+                    f"- IGNORE input language. TARGET LANGUAGE IS {target_lang}.\n"
+                    f"   - TRANSLATION: You MUST translate the content into {target_lang}.\n"
+                    f"   - MANDATORY: Write the ENTIRE response in {target_lang}."
+                )
             else:
-                lang_instr = "DETECT and match the input language."
+                # FIX: Remove negative logic ("FORBIDDEN") which confuses 12B models.
+                # Use positive reinforcement for English retention.
+                lang_instruction = (
+                    "- DETECT the language of the '=== INPUT TO PROCESS ===' below.\n"
+                    "- MANDATORY: Respond in the EXACT SAME language as the detected input.\n"
+                    "- CRITICAL: If the input is in English, you MUST respond in English."
+                )
 
             # Decision Logic: Quick Search vs Briefing
             if parsed["is_brief"]:
 
-                # ... [Code for Model Swapping is unchanged] ...
                 # Check if a specific task model is requested via UserValves
                 target_model = self.user_valves.task_model
                 current_model = body.get("model")
@@ -653,83 +696,123 @@ class Filter:
                     self.ctx.model.original_model = current_model
                     body["model"] = target_model
 
-                # 1. Check for Nano Mode (Modifier OR Watermark)
-                is_recursive = EB_WATERMARK in content
-                if parsed["is_nano"] or is_recursive:
+                # SMART NANO LOGIC (Absolute Threshold per User Request)
+                # Calculate word count of the actual input (Cleaning <think> blocks)
+                clean_content = re.sub(
+                    r"<think>.*?</think>", "", content, flags=re.DOTALL
+                ).strip()
+                input_words = len(clean_content.split())
+                smart_threshold = self.user_valves.smart_nano_threshold
+
+                # Check triggers
+                user_wants_nano = parsed["is_nano"] or (EB_WATERMARK in content)
+
+                # Logic: Absolute Override based on threshold (except for Web Search)
+                # If text is short, we force Nano. No debate.
+                force_smart_nano = (
+                    not parsed["is_search"]
+                    and input_words < smart_threshold
+                    and smart_threshold > 0
+                )
+
+                if user_wants_nano or force_smart_nano:
+
+                    # Calculate Dynamic Length
+                    # If forced by smart logic, use 70% of input length to stay tight
+                    if force_smart_nano:
+                        calc_len = int(input_words * AUTO_NANO_BRIEF_COMPRESSION)
+                        target_len = max(
+                            50, calc_len, self.user_valves.max_nano_brief_length
+                        )
+                        status_msg = f"💬 Input too short ({input_words}w). Auto Nano Brief ({target_len}w).. ({calc_len})"
+                    else:
+                        target_len = self.user_valves.max_nano_brief_length
+                        status_msg = "✨ Generating a Nano Brief.."
+
                     self.debug.log(
-                        f"Nano Mode Active (Modifier: {parsed['is_nano']}, Recursive: {is_recursive})"
+                        f"Nano Mode Active. Forced: {force_smart_nano}. Target Words: {target_len}"
                     )
-                    selected_prompt = NANO_PROMPT
-                    await self.em.emit_status("⚡ Nano Brief Generating...", False)
+
+                    selected_prompt = NANO_PROMPT.format(
+                        NANO_LENGTH=target_len, LANGUAGE_INSTRUCTION=lang_instruction
+                    )
+                    await self.em.emit_status(status_msg, False)
 
                 else:
-                    # 2. Determine Rich Mode (Modifier Override > Valve Default)
-                    if parsed["force_rich"] is not None:
-                        is_rich = parsed["force_rich"]
-                    else:
-                        is_rich = self.user_valves.rich_output
+                    # 2. Rich/Simple Mode
+                    is_rich = parsed["force_rich"]
 
-                    # Select Prompt based on Mode
-                    selected_prompt = BRIEF_PROMPT if is_rich else SIMPLE_PROMPT
+                    # FIX: Resolve Default Mode here (Late Binding)
+                    # If parsed["force_rich"] is None (which happens for >> or ?>), use Default Valve
+                    if is_rich is None:
+                        is_rich = self.user_valves.default_brief_mode == "rich"
 
-                    # Notify User
-                    status_icon = "📊" if is_rich else "📝"
+                    base_prompt = BRIEF_PROMPT if is_rich else SIMPLE_PROMPT
                     status_label = "Rich Brief" if is_rich else "Simple Brief"
                     await self.em.emit_status(
-                        f"{status_icon} {status_label} Generating...", False
+                        f"✨ Generating a {status_label}..", False
                     )
 
-                    # Resolve lengths (UserValves > Valves)
-                    ov_len = (
-                        self.user_valves.overview_length or self.valves.overview_length
-                    )
-                    syn_len = (
-                        self.user_valves.synthesis_length
-                        or self.valves.synthesis_length
-                    )
-                    ana_len = (
-                        self.user_valves.analysis_length or self.valves.analysis_length
-                    )
-
+                    # Dynamic Format of the Prompt
                     if is_rich:
-                        selected_prompt = (
-                            selected_prompt.replace("{OVERVIEW_LENGTH}", ov_len)
-                            .replace("{SYNTESYS_LENGTH}", syn_len)
-                            .replace("{ANALYSYS_LENGTH}", ana_len)
+                        selected_prompt = base_prompt.format(
+                            OVERVIEW_LENGTH=self.user_valves.overview_length,
+                            SYNTESYS_LENGTH=self.user_valves.synthesis_length,
+                            ANALYSYS_LENGTH=self.user_valves.analysis_length,
+                            LANGUAGE_INSTRUCTION=lang_instruction,
+                        )
+                    else:
+                        selected_prompt = base_prompt.format(
+                            LANGUAGE_INSTRUCTION=lang_instruction
                         )
 
-                # FIX: Delimiters strategy to prevent Context Confusion in small models
-                if parsed["is_search"]:
-                    instr = (
-                        f"Search Query: {content}\n\n{selected_prompt}\n\n{lang_instr}"
-                    )
-                else:
-                    instr = (
-                        f"{selected_prompt}\n\n"
-                        f"=== BEGIN INPUT DATA ===\n"
-                        f"{content}\n"
-                        f"=== END INPUT DATA ===\n\n"
-                        f"{lang_instr}"
-                    )
+                data_content = (
+                    f"Search Query: {content}" if parsed["is_search"] else content
+                )
+
+                # Fallback instruction for small models if no lang specified
+                fallback_instr = ""
+                if not parsed["lang"]:
+                    fallback_instr = "If ambiguous or mixed, default to ENGLISH."
+
+                instr = (
+                    f"{selected_prompt}\n\n"
+                    f"=== INPUT TO PROCESS ===\n"
+                    f"{data_content}\n"
+                    f"=== END INPUT TO PROCESS ===\n\n"
+                    f"{fallback_instr}"
+                )
 
             else:
                 # Trigger '??' (Quick Search) mode
-                # FIX: Simplify instruction to avoid confusing RAG
-                instr = f"{content}\n\n{lang_instr}" if parsed["lang"] else content
+                simple_lang_instr = (
+                    f"*** REQUIRED OUTPUT LANGUAGE: {parsed['lang'].upper()} ***"
+                    if parsed["lang"]
+                    else "DETECT and match the input language."
+                )
+                instr = (
+                    f"Search Query: {content}\n\n"
+                    f"INSTRUCTION: Answer the query above using ONLY the provided search results/context. "
+                    f"Do not hallucinate or use prior conversation memory if unrelated.\n\n"
+                    f"{simple_lang_instr}"
+                )
 
             body["messages"][-1]["content"] = instr
 
-            # If briefing is active, we strip the history to prevent user-profile bias
-            # and focus the model's attention solely on the current task.
-            if parsed["is_brief"]:
+            # CRITICAL FIX: Isolation Mode
+            # We must wipe history for:
+            # 1. Briefs (>>) -> Always fresh analysis
+            # 2. Explicit Search (?? query) -> Prevent context bleeding/hallucination from previous turns
+            # We ONLY keep history if it's a Contextual Search (?? without query) acting on previous msg
+            is_explicit_search = parsed["is_search"] and len(content.strip()) > 0
+
+            if parsed["is_brief"] or is_explicit_search:
                 body["messages"] = [body["messages"][-1]]
                 self.debug.log("History wiped: Isolation Mode active.")
 
             if self.ctx.model.override_web_search is not None:
-
                 if "features" not in body:
                     body["features"] = {}
-
                 body["features"]["web_search"] = self.ctx.model.override_web_search
 
             self.ctx.model.executed = True
@@ -777,7 +860,8 @@ class Filter:
                     body["messages"][-1]["content"] += self.debug.emit()
 
             self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
-            await self.em.emit_status(f"{APP_NAME} Done", True)
+            st_icon = "🎯" if self.ctx.model.is_brief else "🔍"
+            await self.em.emit_status(f"{st_icon} {APP_NAME} Done", True)
 
         return body
 
