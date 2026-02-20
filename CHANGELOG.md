@@ -1,4 +1,6 @@
 
+* **2026-02-21**: v0.4.4 - complete refactor of BRIEF_PROMPT (Hannibal)   
+
 * **2026-02-20**: v0.4.3 - fixes and minor optimizations (Hannibal)   
 
 * **2026-02-20**: v0.4.2 - new syntax, nano, table, schematic and rich brief, prompt tuning (Hannibal)   

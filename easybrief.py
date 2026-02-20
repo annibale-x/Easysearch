@@ -60,6 +60,18 @@ graph TD
 ```
 
 ```mermaid
+graph TD
+    A["Stimulus"] --> B(("CNS Processing"))
+    B --> C(("Sympathetic Nervous System"))
+    B --> D(("Parasympathetic Nervous System"))
+    C --> E["Increased Heart Rate, Dilated Pupils, etc."]
+    D --> F["Decreased Heart Rate, Constricted Pupils, etc."]
+    E --> G["Response to Stress/Action"]
+    F --> H["Rest/Digestion"]
+    ...
+```
+
+```mermaid
 mindmap
   root("Main Subject")
     ("Node")
@@ -148,7 +160,7 @@ Follow these mandatory rules:
 2. TEXT & CONTEXT MANAGEMENT:
    - Provide exactly 1-2 lines of introductory context before every visual element.
    - NO NARRATIVE FLUFF: Do not write long paragraphs. Convert text into structured formats.
-   - NO BULLET LISTS: Convert lists of items into Tables or Mindmaps.
+   - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. **CRITICAL OVERRIDE: If the input contains NESTED/MULTI-LEVEL lists, YOU MUST visualize them using a Mermaid `mindmap` or `graph TD`.**
    - SPACING: Insert a horizontal divider (---) between every main section.
 
 3. SUMMARY & CLEANLINESS: 
@@ -173,13 +185,16 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
 2. STRUCTURE & TEMPLATE ARCHITECTURE:
    Your report MUST strictly follow this hierarchical sequence (DO NOT print "BLOCK" labels):
    - [BLOCK 0] Executive Overview: MUST start with the header '## 🎯 Executive Overview'. Followed by a concise thesis ({OVERVIEW_LENGTH}). Focus strictly on the core conclusion.
-   - [BLOCK 0.5] Structural Visual: CONDITIONAL. Insert a MERMAID CODE BLOCK (```mermaid) containing a `mindmap` ONLY IF the topic involves complex structural relationships (systems, taxonomies). OMIT this block for simple rankings, flat lists, or linear chronologies.
-   - [BLOCK 1..N] Macro-topics:
+   - [BLOCK 1..N] Macro-topics (Repeat for every major section):
      - Separator (---) 
      - ## Heading (preceded by emoji).
-     - Concept Synthesis ({SYNTESYS_LENGTH}): Fact-based summary. FORMAT: Strictly continuous paragraphs. Style: Dry, technical, zero fluff. No adjectives.
+     - **Concept Synthesis**: ({SYNTESYS_LENGTH}) Fact-based summary. FORMAT: Strictly continuous paragraphs. Style: Dry, technical, zero fluff. No adjectives.
        *** CRITICAL OVERRIDE: If input data for this topic is scarce/short, IGNORE length target. Be concise. DO NOT invent filler content. ***
-     - [Optional Data Block]: Analytical Context ({ANALYSYS_LENGTH}) followed by its Visual Element (Table, Pie Chart, or Graph).
+     - **Analytical Insight**: ({ANALYSYS_LENGTH}) Contextual explanation leading into the visual.
+     - **Visual Element**: MANDATORY. Insert the most appropriate visual for this section:
+       - Use a **TABLE** for data lists, comparisons, specs, or flat chronologies.
+       - Use a **MERMAID MINDMAP** (`mindmap`) if the section describes a hierarchy, taxonomy, or complex structure.
+       - Use a **MERMAID GRAPH** (`graph TD`) if the section describes a flow or process.
    - [FINAL BLOCK] 📌 Key Takeaways (blockquote >).
 
 3. VISUAL ELEMENT RULES:
@@ -187,8 +202,8 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    - MERMAID GRAPH: MANDATORY: Wrap code in triple backticks (```mermaid). Use `graph TD` exclusively. Use ONLY square brackets `["Text"]` for nodes. ALWAYS wrap text in double quotes.
    - MERMAID PIE: MANDATORY for market shares or percentage distributions. Wrap labels in double quotes.
    - VISUAL ACCESSIBILITY: Ensure high contrast (dark text on light nodes, light text on dark nodes).
-   - NARRATIVE PRIORITY: Every visual element MUST be preceded by its own Analytical Context block.
-   - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. For multi-level/nested lists, YOU MUST split them into specific Sub-headings (###) containing their own dedicated Tables.
+   - NARRATIVE PRIORITY (STRICT): **EVERY** visual element (including Mermaid Mindmaps/Graphs) MUST be preceded by `Concept Synthesis` and `Analytical Insight` blocks. NEVER output a 'naked' diagram under a header.
+   - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. **CRITICAL OVERRIDE: If the input contains NESTED/MULTI-LEVEL lists, YOU MUST visualize them using a Mermaid `mindmap` or `graph TD`.**
 
 {MERMAID_EXAMPLES}
 
@@ -200,39 +215,24 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
 
 A dense {OVERVIEW_LENGTH} words summary.
 
-```mermaid
-graph TD
-    A["Main Concept"] --> B["Component"]
-```
-
 ---
 
 ## ⚙️ Foundational Logic
 
 **Concept Synthesis**: {SYNTESYS_LENGTH} words block. Do NOT use bullet points here. Write a dense, factual summary.
 
-**Analytical Insight**: {ANALYSYS_LENGTH} words block.
+**Analytical Insight**: {ANALYSYS_LENGTH} words block explaining the visual below.
 
-| Dimension | Impact |
-|-----------|--------|
-| Logic A   | High   |
+```mermaid
+graph TD
+    A["Main Concept"] --> B["Component"]
+```
+(OR Table OR Mindmap)
 
 ---
 
 📌 **Key Takeaways**
 Concise summary points (bullet list).
-
----
-
-CRITICAL RECAP: 
-- Flow: Overview -> Visual -> Heading -> Synthesis (Must be {SYNTESYS_LENGTH}, NO BULLETS) -> Analysis -> Table/Graph.
-- Respond ONLY in the input language (No English translation).
-- Tables: NO backticks. Pipe (|) start. One empty line before/after.
-- The output must end exactly at the Key Takeaways box.
-- No bullets: Convert lists of items into Tables.
-- Use 🎯 as emoji in the overview.
-- Use 📌 as emoji in the Key Takeaways.
-- Must use the format of REFERENCE TEMPLATE defined above
 """
 
 
