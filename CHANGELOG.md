@@ -1,3 +1,9 @@
+* **2026-02-21**: v0.4.8 - Filter.inlet Logic Modularization (Hannibal)  
+  * Refactored the monolithic `Filter.inlet` method into dedicated helper functions (`_resolve_brief_mode`, `_get_prompt_template`).
+  * Decoupled "Smart Nano" threshold logic and model swapping from the main execution flow.
+  * Improved code maintainability and readability by reducing cyclomatic complexity.
+  * No functional changes to the end-user experience.
+
 * **2026-02-21**: v0.4.7 - Prompt Modularization & Architecture Refactor (Hannibal)
 
 * **2026-02-21**: v0.4.6 - enforce Overview->Context->Visual flow in SCHEMATIC_PROMPT (Hannibal)
