@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.9
+version: 0.4.10
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -318,10 +318,10 @@ A dense {{OVERVIEW_LENGTH}} words summary.
 
 **Analytical Insight**: {{ANALYSYS_LENGTH}} words block explaining the visual below.
 
-```mermaid
-graph TD
-    A["Main Concept"] --> B["Component"]
-```
+    ```mermaid
+    graph TD
+        A["Main Concept"] --> B["Component"]
+    ```
 (OR Table OR Mindmap)
 
 ---

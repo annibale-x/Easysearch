@@ -1,3 +1,9 @@
+* 2024-05-22: v0.4.10 - Documentation Overhaul & Syntax Fixes (Hannibal)
+  * Updated README.md with rigorous command syntax (b>, s>, t>, n>).
+  * Clarified RAG/PDF limitations (Context-only processing vs Vector DB).
+  * Detailed User Valves configuration with natural language examples.
+  * Refined "Smart Nano" and "Watermark" logic explanations.
+
 * **2026-02-21**: v0.4.9 - Semantic Trigger Symmetry (Hannibal)
   * Refactored `_parse_trigger` logic to support variable-length command tokens.
   * Introduced "Sandwich Syntax" for Web Search Briefs (e.g., `?n>`, `?s>`, `?t>`) to align with the logical brief operator `>`.
