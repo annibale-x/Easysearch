@@ -171,8 +171,6 @@ TASK: Distill it into a 'Flash Brief' (max {{NANO_LENGTH}} words) for quick mobi
 """
 
 # Uses: MOD_FORMATTING_CORE, RULE_TABLES, MOD_TAKEAWAYS
-# Note: Single braces {MOD} for immediate injection. Double braces {{VAL}} for runtime format.
-# Uses: MOD_FORMATTING_CORE, RULE_TABLES, MOD_TAKEAWAYS
 TABLE_PROMPT = f"""
 Analyze the input and reorganize it into a structured executive report.
 
