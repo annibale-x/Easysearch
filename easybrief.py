@@ -34,8 +34,13 @@ AUTO_NANO_BRIEF_COMPRESSION = 0.5
 # --- MERMAID EXAMPLES (Extracted from source v0.3.7) ---
 
 MERMAID_EXAMPLES = """
-4. MERMAID EXAMPLES
-   - MANDATORY: Use double quotes for labels.
+4. MERMAID SYNTAX RULES (NON-NEGOTIABLE):
+   - CRITICAL: Every single node label MUST be wrapped in double quotes.
+   - ILLEGAL SYNTAX: `A[Text (...)]`, `B(Text (...))`, `C{Text (...)}` -> WILL CRASH THE RENDERER.
+   - CORRECT SYNTAX: `A["Text (...)"]`, `B("Text (...)")`, `C{"Text (...)"}`.
+   - NO STYLING: Do not use `style`, `classDef` or `linkStyle`. Keep it raw.
+
+5. VALID EXAMPLES:
 
 ```mermaid
 graph TD
@@ -94,6 +99,21 @@ pie
   "Other (ASICs)" : 5
   ...
 ```
+
+```mermaid
+graph LR
+    A["Chronic Stress"] --> B("HPA Axis Dysregulation")
+    A --> C("ANS Imbalance")
+    A --> D("Immune Dysregulation")
+    B -- "GR Resistance, Elevated Cortisol" --> E{"Systemic Inflammation"}
+    C -- "Sympathetic Dominance" --> E
+    D -- "Skewed Cytokine Profile" --> E
+    E --> F["Chronic Disease (CVD, Diabetes, Depression, etc.)"]
+    B <--> C
+    B <--> D
+    C <--> D
+    ...
+```
 """
 
 # --- PROMPT TEMPLATES ---
@@ -146,30 +166,34 @@ GOAL: Professional, visual, strictly technical report. No bullet points, only st
 """
 
 SCHEMATIC_PROMPT = """
-Analyze the input and reorganize it into a structured technical report. 
-Follow these mandatory rules:
+Analyze the input and reorganize it into a structured technical report.
 
 0. LANGUAGE PROTOCOL:
    {LANGUAGE_INSTRUCTION}
 
-1. VISUALIZATION FIRST (Mermaid > Tables):
-   - TOP PRIORITY: If the topic involves structure, hierarchy, or flows, YOU MUST START with a Mermaid diagram (Mindmap or Flowchart).
-   - DATA SEGMENTATION: Use Mermaid for high-level relationships/logic. Use Tables for granular specs, comparisons, or flat lists.
-   - NO REDUNDANCY: Do NOT repeat the same content in both a diagram and a table. Choose the best format for the data type.
+1. STRUCTURAL ARCHITECTURE (STRICT SEQUENCE):
+   - **## 🎯 Executive Overview**: MANDATORY. Start with a concise thesis (2-4 lines).
+   - **## <Emoji> Header**: Descriptive title for each section.
+   - MANDATORY. Write a brief paragraph (1-2 lines) explaining the logic *BEFORE* the visual element.
+   - **Visual Element**: Insert the Mermaid Diagram or Table immediately *AFTER* the context.
+   - **FORBIDDEN**: Do NOT print block labels like "[BLOCK 0]". Do NOT write explanatory text *below* the visual.
 
-2. TEXT & CONTEXT MANAGEMENT:
-   - Provide exactly 1-2 lines of introductory context before every visual element.
-   - NO NARRATIVE FLUFF: Do not write long paragraphs. Convert text into structured formats.
-   - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. **CRITICAL OVERRIDE: If the input contains NESTED/MULTI-LEVEL lists, YOU MUST visualize them using a Mermaid `mindmap` or `graph TD`.**
-   - SPACING: Insert a horizontal divider (---) between every main section.
+2. VISUALIZATION STRATEGY (Mermaid > Tables):
+   - **HIERARCHY & FLOWS**: You MUST use `mermaid` (Mindmap or Graph) for processes, structures, taxonomies, and systems.
+   - **DATA & SPECS**: Use Tables for flat lists, comparisons, values, and definitions.
+   - **NO REDUNDANCY**: Do not repeat the diagram contents in a table. Choose the single best format.
 
-3. SUMMARY & CLEANLINESS: 
-   - Conclude with a **📌 Key Takeaways** box (concise summary points (bullet list)) using a blockquote (>). 
-   - MANDATORY: Do not add any introductory or concluding remarks or meta-talk. The output must end exactly at the Key Takeaways box.
+3. MERMAID SYNTAX RULES (NON-NEGOTIABLE):
+   - **QUOTES**: Every single node label MUST be in double quotes: `id["Text Content"]`.
+   - **NO STYLING**: Keep it raw. No `style` or `classDef`.
+
+4. CLOSING:
+   - Conclude with a **📌 Key Takeaways** box (bullet list) using a blockquote (>).
+   - END exactly at the Key Takeaways.
 
 {MERMAID_EXAMPLES}
 
-GOAL: Professional, visual, strictly technical report. Prioritize Mindmaps/Flowcharts for structure, Tables for data.
+GOAL: Visual-first technical report. Flow: Overview -> Header -> Context -> Visual.
 """
 
 BRIEF_PROMPT = """
