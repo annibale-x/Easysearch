@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.5
+version: 0.4.6
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -171,25 +171,38 @@ Analyze the input and reorganize it into a structured technical report.
 0. LANGUAGE PROTOCOL:
    {LANGUAGE_INSTRUCTION}
 
-1. STRUCTURAL ARCHITECTURE (STRICT SEQUENCE):
-   - **## 🎯 Executive Overview**: MANDATORY. Start with a concise thesis (2-4 lines).
-   - **## <Emoji> Header**: Descriptive title for each section.
-   - MANDATORY. Write a brief paragraph (1-2 lines) explaining the logic *BEFORE* the visual element.
-   - **Visual Element**: Insert the Mermaid Diagram or Table immediately *AFTER* the context.
-   - **FORBIDDEN**: Do NOT print block labels like "[BLOCK 0]". Do NOT write explanatory text *below* the visual.
+1. REPORT STRUCTURE (STRICT FLOW):
+   - **## 🎯 Executive Overview**
+     (Mandatory New Line): Write a concise thesis (3-5 lines).
+     (Constraint): Do NOT make the body text Bold or Heading size. Normal text only.
+
+   - **## <Emoji> Section Header**
+     (Repeat for each main topic).
+
+   - **Analytical Context**
+     Write a brief paragraph (2-3 lines) explaining the logic *BEFORE* the visual.
+
+   - **[VISUAL CONTENT]**
+     Insert the Mermaid Diagram or Markdown Table immediately here.
+     *NEGATIVE CONSTRAINT*: Do NOT print labels like "**Mermaid Diagram:**" or "Table 1:". Just print the visual content.
 
 2. VISUALIZATION STRATEGY (Mermaid > Tables):
-   - **HIERARCHY & FLOWS**: You MUST use `mermaid` (Mindmap or Graph) for processes, structures, taxonomies, and systems.
-   - **DATA & SPECS**: Use Tables for flat lists, comparisons, values, and definitions.
-   - **NO REDUNDANCY**: Do not repeat the diagram contents in a table. Choose the single best format.
+   - **HIERARCHY & FLOWS**: You MUST use `mermaid` (Mindmap or Graph) for processes, structures, taxonomies.
+   - **DATA**: Use Tables for flat lists, comparisons, values.
+   - **NO REDUNDANCY**: Do not repeat the diagram contents in a table.
 
 3. MERMAID SYNTAX RULES (NON-NEGOTIABLE):
    - **QUOTES**: Every single node label MUST be in double quotes: `id["Text Content"]`.
-   - **NO STYLING**: Keep it raw. No `style` or `classDef`.
+   - **STRICTLY NO STYLING**: Do NOT use `style`, `classDef`, `linkStyle` or `fill`.
+     - **CRITICAL**: Custom styling causes rendering errors. Keep the graph strictly Black & White.
+     - **FORBIDDEN**: `style A fill:#f9f...` (This will crash the report).
 
-4. CLOSING:
-   - Conclude with a **📌 Key Takeaways** box (bullet list) using a blockquote (>).
-   - END exactly at the Key Takeaways.
+4. CLOSING (Use this EXACT format):
+   > **📌 Key Takeaways**
+   > * Point 1
+   > * Point 2
+
+   - MANDATORY: The header "**Key Takeaways**" must be BOLD. The bullet points must be on separate lines inside the blockquote.
 
 {MERMAID_EXAMPLES}
 
