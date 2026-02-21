@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.8
+version: 0.4.9
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -54,20 +54,45 @@ RULE_TABLES = """
 - **NO BULLETS**: Convert lists of items into Tables.
 """
 
+# # 3. Visual Engine: Mermaid (Legacy Bluff)
+# RULE_MERMAID = """
+# *MERMAID COMPATIBILITY MODE (CRITICAL)*:
+# - **TARGET RENDERER**: Legacy Mermaid Engine.
+# - **CAPABILITIES**: Supports ONLY basic nodes and arrows.
+# - **UNSUPPORTED FEATURES (WILL CRASH)**: `subgraph`, `style`, `fill`, `linkStyle`, `classDef`.
+# - **STRATEGY**: Use simple `graph TD` flowcharts without nesting.
+# - **SYNTAX ENFORCEMENT**: You MUST use double quotes for ALL node types:
+#   - SQUARE: `id["Text"]`
+#   - ROUND: `id("Text")`
+#   - CIRCLE: `id(("Text"))`
+#   - RHOMBUS: `id{{"Text"}}`
+# - **MANDATORY**: Wrap code in triple backticks (```mermaid).
+# """
+# `classDef default fill:#c3c3c3,stroke:#111,stroke-width:1px,color:#333,font-size:90%;`
+
 # 3. Visual Engine: Mermaid (Legacy Bluff)
 RULE_MERMAID = """
-*MERMAID COMPATIBILITY MODE (CRITICAL)*:
-- **TARGET RENDERER**: Legacy Mermaid Engine.
-- **CAPABILITIES**: Supports ONLY basic nodes and arrows.
-- **UNSUPPORTED FEATURES (WILL CRASH)**: `subgraph`, `style`, `fill`, `linkStyle`, `classDef`.
-- **STRATEGY**: Use simple `graph TD` flowcharts without nesting.
-- **SYNTAX**: Always use double quotes for labels: `id["Text"]`.
-- **MANDATORY**: Wrap code in triple backticks (```mermaid).
+*MERMAID VISUAL PROTOCOL (STRICT)*:
+- **TYPE**: Use `graph TD` or `graph LR` ONLY.
+- **STRUCTURE**: **FLAT ONLY**. Do NOT use `subgraph`.
+- **ID SYNTAX (CRITICAL)**:
+  - Node IDs must be **SINGLE WORD** alphanumeric (e.g., `NodeA`, `HPA`, `Root`).
+  - **ILLEGAL**: IDs with spaces (e.g., `Acute Stress` -> CRASH).
+- **LABEL SYNTAX**:
+  - Use double quotes for ALL labels: `id["Text Content"]`.
+  - Use `<br/>` for line breaks.
+- **CONNECTIONS**:
+  - Use `-->` or `<-->`.
+  - One connection per line. Explicit source and target.
+- **STYLING**:
+  - **FORBIDDEN**: `style`, `fill`, `linkStyle`.
+- **WRAPPER**: Triple backticks (```mermaid).
 """
+
 
 # 4. Closing Standard
 MOD_TAKEAWAYS = """
-CLOSING (Use this EXACT format, max 8 points):
+CLOSING (Use this EXACT format):
 > **📌 Key Takeaways**
 > * **Label 1**: Point 1
 > * **Label 2**: Point 2
@@ -83,24 +108,25 @@ MERMAID_EXAMPLES = """
 5. MERMAID SYNTAX REFERENCE (STRICTLY v8.0 COMPATIBLE):
    - SYSTEM CONSTRAINT: The renderer is OLD. It DOES NOT support `subgraph`, `style`, `linkStyle`, or `fill`.
    - USE ONLY: `graph TD`, `graph LR`, `mindmap`.
-   - QUOTES: Mandatory for all labels. `id["Label"]`.
+   - QUOTES: Mandatory for ALL brackets. `["Text"]`, `("Text")`, `{"Text"}`.
 
    CORRECT PATTERNS:
     ```mermaid
     graph TD
-      A["Concept A"] --> B["Concept B"]
-      B -- "Connection" --> C["Concept C"]
+      A["Concept A"] --> B("Concept B (Rounded)")
+      B -- "Connection" --> C{"Concept C (Decision)"}
+      C --> D(("Concept D (Circle)"))
       ...  
     ```
     ```mermaid
     graph LR
         A["Root Cause"] --> B("Process A (Standard)")
         A --> C(("Process B (Critical)"))
-        A --> D("Process C (Secondary)")
-        B -- "Condition 1, High Impact" --> E{"Systemic Result"}
+        A --> D["Process C (Secondary)"]
+        B -- "Condition 1" --> E{"Systemic Result"}
         C -- "Condition 2" --> E
         D -- "Condition 3" --> E
-        E --> F["Final Outcome (Long-term effects)"]
+        E --> F["Final Outcome"]
         B <--> C
         B <--> D
         C <--> D
@@ -585,8 +611,10 @@ class Filter:
         # Generate permutations for modes (Lower & Upper)
         for k, mode in modes.items():
             for char in (k.lower(), k.upper()):
+                # Local Brief: n>
                 trigger_map[f"{char}{B}"] = {"s": False, "b": True, "mode": mode}
-                trigger_map[f"{S}{char}"] = {"s": True, "b": True, "mode": mode}
+                # Web Brief (Sandwich): ?n>
+                trigger_map[f"{S}{char}{B}"] = {"s": True, "b": True, "mode": mode}
 
         # Explicit overrides for Double-Tap (High Priority)
         trigger_map.update(
@@ -609,17 +637,27 @@ class Filter:
 
         command_token = parts[0]
 
-        if len(command_token) < 2:
-            return None
+        # Match against triggers (Check 3-char first, then 2-char)
+        matched_cfg = None
+        trigger_len = 0
 
-        prefix_2 = command_token[:2]
-        matched_cfg = trigger_map.get(prefix_2)
+        if len(command_token) >= 3:
+            prefix_3 = command_token[:3]
+            if prefix_3 in trigger_map:
+                matched_cfg = trigger_map[prefix_3]
+                trigger_len = 3
+
+        if not matched_cfg and len(command_token) >= 2:
+            prefix_2 = command_token[:2]
+            if prefix_2 in trigger_map:
+                matched_cfg = trigger_map[prefix_2]
+                trigger_len = 2
 
         if not matched_cfg:
             return None
 
         # 4. Extract Modifier (Strict Syntax)
-        raw_mod = command_token[2:]
+        raw_mod = command_token[trigger_len:]
         lang = None
 
         if raw_mod:
@@ -782,7 +820,7 @@ class Filter:
                 OVERVIEW_LENGTH=self.user_valves.overview_length,
                 SYNTESYS_LENGTH=self.user_valves.synthesis_length,
                 ANALYSYS_LENGTH=self.user_valves.analysis_length,
-                LANGUAGE_INSTRUCTION=lang_instruction,
+                LANGUAGE_INSTRUCTION=lang_instr,
                 MERMAID_EXAMPLES=MERMAID_EXAMPLES,
             )
 

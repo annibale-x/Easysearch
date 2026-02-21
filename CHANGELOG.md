@@ -1,3 +1,8 @@
+* **2026-02-21**: v0.4.9 - Semantic Trigger Symmetry (Hannibal)
+  * Refactored `_parse_trigger` logic to support variable-length command tokens.
+  * Introduced "Sandwich Syntax" for Web Search Briefs (e.g., `?n>`, `?s>`, `?t>`) to align with the logical brief operator `>`.
+  * Harmonized the mental model: `?` (Source: Web) + `x` (Mode) + `>` (Action: Brief).
+
 * **2026-02-21**: v0.4.8 - Filter.inlet Logic Modularization (Hannibal)  
   * Refactored the monolithic `Filter.inlet` method into dedicated helper functions (`_resolve_brief_mode`, `_get_prompt_template`).
   * Decoupled "Smart Nano" threshold logic and model swapping from the main execution flow.
