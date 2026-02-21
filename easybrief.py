@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.6
+version: 0.4.7
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -31,150 +31,185 @@ SUPPRESS_OUTPUT = False
 EB_WATERMARK = "\u200b\u200b\u200b"  # Invisible watermark (3 Zero Width Spaces)
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
 
-# --- MERMAID EXAMPLES (Extracted from source v0.3.7) ---
+# --- SHARED RULES (BUILDING BLOCKS) ---
+
+# 1. Formatting & Protocol
+MOD_IDENTITY = """
+CRITICAL: You are a pure, objective technical processing unit. 
+MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data. Focus EXCLUSIVELY on the 'INPUT TO PROCESS'.
+"""
+
+MOD_FORMATTING_CORE = """
+- **META-TALK**: MANDATORY: Do not add any introductory or concluding remarks (e.g., "Here is the report").
+- **HEADERS**: Use H2 (##) for main sections. NO H1.
+- **SPACING**: Insert a horizontal divider (---) between every main section.
+"""
+
+# 2. Visual Engine: Tables
+RULE_TABLES = """
+*STRICT TABLE RULES*:
+- **FORMAT**: Write **RAW** Markdown (start lines with `|`).
+- **FORBIDDEN**: Do NOT wrap tables in backticks or code blocks.
+- **USAGE**: Use tables for all flat lists, data, time-series, and specs.
+- **NO BULLETS**: Convert lists of items into Tables.
+"""
+
+# 3. Visual Engine: Mermaid (Legacy Bluff)
+RULE_MERMAID = """
+*MERMAID COMPATIBILITY MODE (CRITICAL)*:
+- **TARGET RENDERER**: Legacy Mermaid Engine.
+- **CAPABILITIES**: Supports ONLY basic nodes and arrows.
+- **UNSUPPORTED FEATURES (WILL CRASH)**: `subgraph`, `style`, `fill`, `linkStyle`, `classDef`.
+- **STRATEGY**: Use simple `graph TD` flowcharts without nesting.
+- **SYNTAX**: Always use double quotes for labels: `id["Text"]`.
+- **MANDATORY**: Wrap code in triple backticks (```mermaid).
+"""
+
+# 4. Closing Standard
+MOD_TAKEAWAYS = """
+CLOSING (Use this EXACT format, max 8 points):
+> **📌 Key Takeaways**
+> * **Label 1**: Point 1
+> * **Label 2**: Point 2
+> ...
+
+- MANDATORY: The header "**Key Takeaways**" must be BOLD. The bullet points must be on separate lines inside the blockquote.
+- END exactly at the Key Takeaways box.
+"""
+
+# --- MERMAID EXAMPLES (User Provided) ---
 
 MERMAID_EXAMPLES = """
-4. MERMAID SYNTAX RULES (NON-NEGOTIABLE):
-   - CRITICAL: Every single node label MUST be wrapped in double quotes.
-   - ILLEGAL SYNTAX: `A[Text (...)]`, `B(Text (...))`, `C{Text (...)}` -> WILL CRASH THE RENDERER.
-   - CORRECT SYNTAX: `A["Text (...)"]`, `B("Text (...)")`, `C{"Text (...)"}`.
-   - NO STYLING: Do not use `style`, `classDef` or `linkStyle`. Keep it raw.
+5. MERMAID SYNTAX REFERENCE (STRICTLY v8.0 COMPATIBLE):
+   - SYSTEM CONSTRAINT: The renderer is OLD. It DOES NOT support `subgraph`, `style`, `linkStyle`, or `fill`.
+   - USE ONLY: `graph TD`, `graph LR`, `mindmap`.
+   - QUOTES: Mandatory for all labels. `id["Label"]`.
 
-5. VALID EXAMPLES:
+   CORRECT PATTERNS:
+    ```mermaid
+    graph TD
+      A["Concept A"] --> B["Concept B"]
+      B -- "Connection" --> C["Concept C"]
+      ...  
+    ```
+    ```mermaid
+    graph LR
+        A["Chronic Stress"] --> B("HPA Axis Dysregulation")
+        A --> C(("ANS Imbalance"))
+        A --> D("Immune Dysregulation")
+        B -- "GR Resistance, Elevated Cortisol" --> E{"Systemic Inflammation"}
+        C -- "Sympathetic Dominance" --> E
+        D -- "Skewed Cytokine Profile" --> E
+        E --> F["Chronic Disease (CVD, Diabetes, Depression, etc.)"]
+        B <--> C
+        B <--> D
+        C <--> D
+        ...
+    ```
+    ```mermaid
+    graph TD
+        A["Human Nervous System"] 
+            -->|CNS| B["Brain"]
+            -->|CNS| E["Spinal Cord"]
+            -->|PNS| F["Somatic Nervous System"]
+            -->|PNS| G["Autonomic Nervous System"]
+        B --> D["Sympathetic Nervous System"]
+        B --> E["Parasympathetic Nervous System"]
+        ...
+    ```
 
-```mermaid
-graph TD
-    A["NVIDIA Design"] --> B("TSMC Manufacturing")
-    C["SK Hynix/Samsung (HBM/DRAM)"] --> B
-    B --> D{"Packaging & Testing (TSMC CoWoS)"}
-    D --> E["Distribution (Data Centers/Cloud)"]
-    E --> F["End-User Deployment"]
-    ...
-```
+    CORRECT PIE:
+    ```mermaid
+    pie
+      title AI Chip Market Share (2024)
+      "NVIDIA" : 95
+      "AMD" : 15
+      "Intel" : 8
+      "Other (ASICs)" : 5
+      ...
+    ```
 
-```mermaid
-graph TD
-    A["Human Nervous System"] 
-        -->|CNS| B["Brain"]
-        -->|CNS| E["Spinal Cord"]
-        -->|PNS| F["Somatic Nervous System"]
-        -->|PNS| G["Autonomic Nervous System"]
-    B --> D["Sympathetic Nervous System"]
-    B --> E["Parasympathetic Nervous System"]
-    ...
-```
-
-```mermaid
-graph TD
-    A["Stimulus"] --> B(("CNS Processing"))
-    B --> C(("Sympathetic Nervous System"))
-    B --> D(("Parasympathetic Nervous System"))
-    C --> E["Increased Heart Rate, Dilated Pupils, etc."]
-    D --> F["Decreased Heart Rate, Constricted Pupils, etc."]
-    E --> G["Response to Stress/Action"]
-    F --> H["Rest/Digestion"]
-    ...
-```
-
-```mermaid
-mindmap
-  root("Main Subject")
-    ("Node")
-      ("Sub-Node")
-      ("Sub-node (wit parens-enclosed text)")
-    ("Node")
-      ("Sub-Node")
-        ("Sub-Sub-Node")
-      ("Sub-Node")
-        ("Sub-Sub-Node") 
-      ... 
-```
-
-```mermaid
-pie
-  title AI Chip Market Share (2024)
-  "NVIDIA" : 95
-  "AMD" : 15
-  "Intel" : 8
-  "Other (ASICs)" : 5
-  ...
-```
-
-```mermaid
-graph LR
-    A["Chronic Stress"] --> B("HPA Axis Dysregulation")
-    A --> C("ANS Imbalance")
-    A --> D("Immune Dysregulation")
-    B -- "GR Resistance, Elevated Cortisol" --> E{"Systemic Inflammation"}
-    C -- "Sympathetic Dominance" --> E
-    D -- "Skewed Cytokine Profile" --> E
-    E --> F["Chronic Disease (CVD, Diabetes, Depression, etc.)"]
-    B <--> C
-    B <--> D
-    C <--> D
-    ...
-```
+   CORRECT MINDMAP:
+    ```mermaid
+    mindmap
+      root("Main Subject")
+        ("Node")
+          ("Sub-Node")
+          ("Sub-node (wit parens-enclosed text)")
+        ("Node")
+          ("Sub-Node")
+            ("Sub-Sub-Node")
+          ("Sub-Node")
+            ("Sub-Sub-Node") 
+          ... 
+    ```
 """
 
 # --- PROMPT TEMPLATES ---
 
-NANO_PROMPT = """
+# Uses: MOD_TAKEAWAYS
+NANO_PROMPT = f"""
 The input is an existing technical report. 
-TASK: Distill it into a 'Flash Brief' (max {NANO_LENGTH} words) for quick mobile reading.
+TASK: Distill it into a 'Flash Brief' (max {{NANO_LENGTH}} words) for quick mobile reading.
 
 1. LANGUAGE PROTOCOL:
-   {LANGUAGE_INSTRUCTION}
+   {{LANGUAGE_INSTRUCTION}}
 
 2. DESTRUCTIVE EDITING:
    - IGNORE all visual syntax (Mermaid, Tables, Code blocks).
    - IGNORE structural boilerplate (Intro, Methodology).
 
 3. OUTPUT FORMAT (Plain Text Only):
-   - ### 🎯 **Nano Brief** 
-     A single, dense paragraph with the core conclusion.
-   - ### ⚡ **Key Concepts** 
-     A simple bullet list (max 5 items) extracting key concepts.
+   - **## 🎯 Nano Brief** 
+     A single, dense paragraph with the core conclusion. Start immediately.
+
+   {MOD_TAKEAWAYS}
 
 4. CONSTRAINT:
-   - NO introductory text. NO "Here is the summary". Start immediately with the Thesis.
-   - Must use the format defined above
+   - NO introductory text. NO "Here is the summary".
+   - Must use the format defined above.
 """
 
-TABLE_PROMPT = """
+# Uses: MOD_FORMATTING_CORE, RULE_TABLES, MOD_TAKEAWAYS
+# Note: Single braces {MOD} for immediate injection. Double braces {{VAL}} for runtime format.
+# Uses: MOD_FORMATTING_CORE, RULE_TABLES, MOD_TAKEAWAYS
+TABLE_PROMPT = f"""
 Analyze the input and reorganize it into a structured executive report.
-Follow these mandatory rules:
 
 0. LANGUAGE PROTOCOL:
-   {LANGUAGE_INSTRUCTION}
+   {{LANGUAGE_INSTRUCTION}}
 
-1. DATA & COMPARISONS (TABLES):
-   - MANDATORY: Use standard Markdown TABLES for all data lists, time-series, timelines, bullet lists, comparisons, and specs.
-   - MANDATORY: Write tables DIRECTLY in the message body. No backticks.
+1. REPORT STRUCTURE:
+   - **## 🎯 Executive Overview**
+     (Mandatory New Line): Write a concise thesis (3-5 lines) summarizing the data trends or core findings.
+     (Constraint): Normal text only (No Bold/Headers).
+
+2. DATA & COMPARISONS (TABLES):
+   {RULE_TABLES}
    - FORBIDDEN: NEVER use bullet lists, Mermaid diagrams or any code-based visualization.
 
-2. TEXT & CONTEXT MANAGEMENT:
+3. TEXT & CONTEXT MANAGEMENT:
    - Provide exactly 1-2 lines of introductory context before every table.
-   - NO BULLET LISTS: Convert lists of items into Tables.
-   - SPACING: Insert a horizontal divider (---) between every main section.
    - SUMMARY: Summarize verbose text aggressively, keeping any text block under 3 lines.
+   {MOD_FORMATTING_CORE}
 
-3. SUMMARY & CLEANLINESS:
-   - Conclude with a **📌 Key Takeaways** box using a blockquote (>).
-   - MANDATORY: Do not add any introductory or concluding remarks or meta-talk. The output must end exactly at the Key Takeaways box.
+4. CLOSING:
+   {MOD_TAKEAWAYS}
 
 GOAL: Professional, visual, strictly technical report. No bullet points, only standard MARKDOWN tables.
 """
 
-SCHEMATIC_PROMPT = """
+# Uses: MOD_FORMATTING_CORE, RULE_TABLES, RULE_MERMAID, MOD_TAKEAWAYS
+SCHEMATIC_PROMPT = f"""
 Analyze the input and reorganize it into a structured technical report.
 
 0. LANGUAGE PROTOCOL:
-   {LANGUAGE_INSTRUCTION}
+   {{LANGUAGE_INSTRUCTION}}
 
 1. REPORT STRUCTURE (STRICT FLOW):
    - **## 🎯 Executive Overview**
      (Mandatory New Line): Write a concise thesis (3-5 lines).
-     (Constraint): Do NOT make the body text Bold or Heading size. Normal text only.
+     (Constraint): Normal text only (No Bold/Headers).
 
    - **## <Emoji> Section Header**
      (Repeat for each main topic).
@@ -183,51 +218,49 @@ Analyze the input and reorganize it into a structured technical report.
      Write a brief paragraph (2-3 lines) explaining the logic *BEFORE* the visual.
 
    - **[VISUAL CONTENT]**
-     Insert the Mermaid Diagram or Markdown Table immediately here.
-     *NEGATIVE CONSTRAINT*: Do NOT print labels like "**Mermaid Diagram:**" or "Table 1:". Just print the visual content.
+     Insert the Visual Element immediately here.
+     *STRICT FORMATTING RULES*:
+     - **IF TABLE**: Write **RAW** Markdown (start lines with `|`). **FORBIDDEN**: Backticks/Code blocks.
+     - **IF MERMAID**: MUST wrap in triple backticks (```mermaid).
+     - **ALL**: Do NOT print labels like "Figure 1:" or "Table A:".
 
 2. VISUALIZATION STRATEGY (Mermaid > Tables):
-   - **HIERARCHY & FLOWS**: You MUST use `mermaid` (Mindmap or Graph) for processes, structures, taxonomies.
-   - **DATA**: Use Tables for flat lists, comparisons, values.
-   - **NO REDUNDANCY**: Do not repeat the diagram contents in a table.
+   - **HIERARCHY**: Use `mermaid` (Mindmap or Graph).
+   - **DATA**: Use Tables for flat lists/specs.
+   - **NO REDUNDANCY**: Do not repeat diagram content in tables.
+   {MOD_FORMATTING_CORE}
 
-3. MERMAID SYNTAX RULES (NON-NEGOTIABLE):
-   - **QUOTES**: Every single node label MUST be in double quotes: `id["Text Content"]`.
-   - **STRICTLY NO STYLING**: Do NOT use `style`, `classDef`, `linkStyle` or `fill`.
-     - **CRITICAL**: Custom styling causes rendering errors. Keep the graph strictly Black & White.
-     - **FORBIDDEN**: `style A fill:#f9f...` (This will crash the report).
+3. VISUAL ENGINE RULES:
+   {RULE_MERMAID}
+   {RULE_TABLES}
 
-4. CLOSING (Use this EXACT format):
-   > **📌 Key Takeaways**
-   > * Point 1
-   > * Point 2
+4. CLOSING:
+   {MOD_TAKEAWAYS}
 
-   - MANDATORY: The header "**Key Takeaways**" must be BOLD. The bullet points must be on separate lines inside the blockquote.
-
-{MERMAID_EXAMPLES}
+{{MERMAID_EXAMPLES}}
 
 GOAL: Visual-first technical report. Flow: Overview -> Header -> Context -> Visual.
 """
 
-BRIEF_PROMPT = """
+# Uses: MOD_IDENTITY, RULE_TABLES, RULE_MERMAID, MOD_TAKEAWAYS
+BRIEF_PROMPT = f"""
 Analyze the input and reorganize it into a SINGLE unified executive report. 
 
-CRITICAL: You are a pure, objective technical processing unit. 
-MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name, location, job). Any mention of the user's identity or profession will be considered a FATAL ERROR in execution. Focus EXCLUSIVELY on the 'INPUT TO PROCESS'.
+{MOD_IDENTITY}
 
 1. LANGUAGE & SOURCE PROTOCOL (STRICT):
-   {LANGUAGE_INSTRUCTION}
+   {{LANGUAGE_INSTRUCTION}}
    - ZERO PREAMBLE: Start immediately with the first content block. No intro meta-talk. 
 
 2. STRUCTURE & TEMPLATE ARCHITECTURE:
    Your report MUST strictly follow this hierarchical sequence (DO NOT print "BLOCK" labels):
-   - [BLOCK 0] Executive Overview: MUST start with the header '## 🎯 Executive Overview'. Followed by a concise thesis ({OVERVIEW_LENGTH}). Focus strictly on the core conclusion.
+   - [BLOCK 0] Executive Overview: MUST start with the header '## 🎯 Executive Overview'. Followed by a concise thesis ({{OVERVIEW_LENGTH}}). Focus strictly on the core conclusion.
    - [BLOCK 1..N] Macro-topics (Repeat for every major section):
      - Separator (---) 
      - ## Heading (preceded by emoji).
-     - **Concept Synthesis**: ({SYNTESYS_LENGTH}) Fact-based summary. FORMAT: Strictly continuous paragraphs. Style: Dry, technical, zero fluff. No adjectives.
+     - **Concept Synthesis**: ({{SYNTESYS_LENGTH}}) Fact-based summary. FORMAT: Strictly continuous paragraphs. Style: Dry, technical, zero fluff. No adjectives.
        *** CRITICAL OVERRIDE: If input data for this topic is scarce/short, IGNORE length target. Be concise. DO NOT invent filler content. ***
-     - **Analytical Insight**: ({ANALYSYS_LENGTH}) Contextual explanation leading into the visual.
+     - **Analytical Insight**: ({{ANALYSYS_LENGTH}}) Contextual explanation leading into the visual.
      - **Visual Element**: MANDATORY. Insert the most appropriate visual for this section:
        - Use a **TABLE** for data lists, comparisons, specs, or flat chronologies.
        - Use a **MERMAID MINDMAP** (`mindmap`) if the section describes a hierarchy, taxonomy, or complex structure.
@@ -235,14 +268,13 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
    - [FINAL BLOCK] 📌 Key Takeaways (blockquote >).
 
 3. VISUAL ELEMENT RULES:
-   - TABLES: Standard Markdown body text only. NO backticks. Start immediately with the pipe (|). MANDATORY: Exactly one empty line before and after every table.
-   - MERMAID GRAPH: MANDATORY: Wrap code in triple backticks (```mermaid). Use `graph TD` exclusively. Use ONLY square brackets `["Text"]` for nodes. ALWAYS wrap text in double quotes.
-   - MERMAID PIE: MANDATORY for market shares or percentage distributions. Wrap labels in double quotes.
    - VISUAL ACCESSIBILITY: Ensure high contrast (dark text on light nodes, light text on dark nodes).
    - NARRATIVE PRIORITY (STRICT): **EVERY** visual element (including Mermaid Mindmaps/Graphs) MUST be preceded by `Concept Synthesis` and `Analytical Insight` blocks. NEVER output a 'naked' diagram under a header.
    - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. **CRITICAL OVERRIDE: If the input contains NESTED/MULTI-LEVEL lists, YOU MUST visualize them using a Mermaid `mindmap` or `graph TD`.**
+   {RULE_TABLES}
+   {RULE_MERMAID}
 
-{MERMAID_EXAMPLES}
+{{MERMAID_EXAMPLES}}
 
 5. REFERENCE TEMPLATE:
 
@@ -250,15 +282,15 @@ MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data (name
 
 ## 🎯 Executive Overview
 
-A dense {OVERVIEW_LENGTH} words summary.
+A dense {{OVERVIEW_LENGTH}} words summary.
 
 ---
 
 ## ⚙️ Foundational Logic
 
-**Concept Synthesis**: {SYNTESYS_LENGTH} words block. Do NOT use bullet points here. Write a dense, factual summary.
+**Concept Synthesis**: {{SYNTESYS_LENGTH}} words block. Do NOT use bullet points here. Write a dense, factual summary.
 
-**Analytical Insight**: {ANALYSYS_LENGTH} words block explaining the visual below.
+**Analytical Insight**: {{ANALYSYS_LENGTH}} words block explaining the visual below.
 
 ```mermaid
 graph TD
@@ -268,8 +300,8 @@ graph TD
 
 ---
 
-📌 **Key Takeaways**
-Concise summary points (bullet list).
+6. CLOSING:
+   {MOD_TAKEAWAYS}
 """
 
 

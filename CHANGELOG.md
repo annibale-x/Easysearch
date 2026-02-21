@@ -1,3 +1,4 @@
+* **2026-02-21**: v0.4.7 - Prompt Modularization & Architecture Refactor (Hannibal)
 
 * **2026-02-21**: v0.4.6 - enforce Overview->Context->Visual flow in SCHEMATIC_PROMPT (Hannibal)
 
