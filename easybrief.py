@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.10
+version: 0.4.11
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -863,10 +863,21 @@ class Filter:
         if not msg_list:
             return body
 
+        # Multimodal Text Extraction
         last_msg = msg_list[-1].get("content", "")
-        txt = (
-            last_msg[0].get("text", "") if isinstance(last_msg, list) else str(last_msg)
-        ).strip()
+        if isinstance(last_msg, list):
+            # Extract and join all text parts from multimodal array
+            txt = "\n".join(
+                [
+                    item.get("text", "")
+                    for item in last_msg
+                    if item.get("type") == "text"
+                ]
+            )
+        else:
+            txt = str(last_msg)
+
+        txt = txt.strip()
 
         # Phase 1: Parsing & Validation
         parsed = self._parse_trigger(txt)
@@ -1008,7 +1019,16 @@ class Filter:
                 and "messages" in body
                 and len(body["messages"]) > 0
             ):
-                body["messages"][-1]["content"] += EB_WATERMARK
+                # FIX: Handle both String and List (Multimodal) output formats
+                last_content = body["messages"][-1]["content"]
+
+                if isinstance(last_content, str):
+                    body["messages"][-1]["content"] += EB_WATERMARK
+                elif isinstance(last_content, list):
+                    # Append invisible text block for multimodal responses
+                    body["messages"][-1]["content"].append(
+                        {"type": "text", "text": EB_WATERMARK}
+                    )
 
             # Restore original model if it was swapped
             if self.ctx.model.original_model:

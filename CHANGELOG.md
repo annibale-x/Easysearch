@@ -1,3 +1,7 @@
+* 2024-05-22: v0.4.11 - Multimodal Stability (Hannibal)
+  * Fix: Robust multimodal input parsing in `inlet` (iterates through content parts to extract text).
+  * Fix: Watermark injection logic in `outlet` now handles list-based content (appends text block instead of string concatenation).
+  
 * 2024-05-22: v0.4.10 - Documentation Overhaul & Syntax Fixes (Hannibal)
   * Updated README.md with rigorous command syntax (b>, s>, t>, n>).
   * Clarified RAG/PDF limitations (Context-only processing vs Vector DB).
