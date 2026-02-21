@@ -1,4 +1,6 @@
 
+* **2026-02-21**: v0.4.5 - Rich Brief renamed in brief (trigger R->B) (Hannibal)   
+
 * **2026-02-21**: v0.4.4 - complete refactor of BRIEF_PROMPT (Hannibal)   
 
 * **2026-02-20**: v0.4.3 - fixes and minor optimizations (Hannibal)   

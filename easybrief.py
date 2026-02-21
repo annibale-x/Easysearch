@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.4
+version: 0.4.5
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -436,8 +436,8 @@ class Filter:
 
     class UserValves(BaseModel):
         default_brief_mode: str = Field(
-            default="rich",
-            description="Your personal preference for '>>'. Options: rich, schematic, table, nano.",
+            default="brief",
+            description="Your personal preference for '>>'. Options: brief, schematic, table, nano.",
         )
         task_model: Optional[str] = Field(
             default=None,
@@ -455,22 +455,22 @@ class Filter:
         )
         overview_length: str = Field(
             default="max 100 words",
-            description="Target length for Executive Overview (Rich Brief).",
+            description="Target length for Executive Overview (Standard Brief).",
         )
         synthesis_length: str = Field(
             default="max 80 words",
-            description="Target length for Concept Synthesis (Rich Brief).",
+            description="Target length for Concept Synthesis (Standard Brief).",
         )
         analysis_length: str = Field(
             default="max 40 words",
-            description="Target length for Analytical Context (Rich Brief).",
+            description="Target length for Analytical Context (Standard Brief).",
         )
         debug: bool = Field(default=False)
 
         @validator("default_brief_mode")
         def validate_mode(cls, v):
-            if v not in ["rich", "schematic", "table", "nano"]:
-                raise ValueError("Mode must be: rich, schematic, table, nano")
+            if v not in ["brief", "schematic", "table", "nano"]:
+                raise ValueError("Mode must be: brief, schematic, table, nano")
             return v
 
     def __init__(self):
@@ -508,8 +508,8 @@ class Filter:
         S = self.valves.search_prefix
         B = self.valves.brief_prefix
 
-        # Core modes mapping
-        modes = {"n": "nano", "s": "schematic", "t": "table", "r": "rich"}
+        # Core modes mapping ('b' replaces 'r')
+        modes = {"n": "nano", "s": "schematic", "t": "table", "b": "brief"}
 
         trigger_map = {}
 
@@ -806,9 +806,6 @@ class Filter:
                     final_mode = explicit_mode
                     if final_mode is None:
                         final_mode = self.user_valves.default_brief_mode
-                        # Remap deprecated 'simple' to 'table' in user config just in case
-                        if final_mode == "simple":
-                            final_mode = "table"
 
                     # Select Prompt
                     if final_mode == "schematic":
@@ -823,7 +820,7 @@ class Filter:
                         )
                         status_label = "Table Brief"
                     else:
-                        # Rich Brief (Default)
+                        # Standard Brief (Default)
                         base_prompt = BRIEF_PROMPT.format(
                             OVERVIEW_LENGTH=self.user_valves.overview_length,
                             SYNTESYS_LENGTH=self.user_valves.synthesis_length,
@@ -831,7 +828,7 @@ class Filter:
                             LANGUAGE_INSTRUCTION=lang_instruction,
                             MERMAID_EXAMPLES=MERMAID_EXAMPLES,
                         )
-                        status_label = "Rich Brief"
+                        status_label = "Standard Brief"
 
                     await self.em.emit_status(
                         f"✨ Generating a {status_label}..", False
