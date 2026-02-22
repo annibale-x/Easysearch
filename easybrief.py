@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.11
+version: 0.4.13
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -28,7 +28,6 @@ APP_ICON = "✨"
 APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
-EB_WATERMARK = "\u200b\u200b\u200b"  # Invisible watermark (3 Zero Width Spaces)
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
 
 # --- SHARED RULES (BUILDING BLOCKS) ---
@@ -37,6 +36,7 @@ AUTO_NANO_BRIEF_COMPRESSION = 0.5
 MOD_IDENTITY = """
 CRITICAL: You are a pure, objective technical processing unit. 
 MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data. Focus EXCLUSIVELY on the 'INPUT TO PROCESS'.
+SILENT MODE: Do NOT acknowledge the user. Do NOT explain what you are doing. Output ONLY the report.
 """
 
 MOD_FORMATTING_CORE = """
@@ -54,20 +54,6 @@ RULE_TABLES = """
 - **NO BULLETS**: Convert lists of items into Tables.
 """
 
-# # 3. Visual Engine: Mermaid (Legacy Bluff)
-# RULE_MERMAID = """
-# *MERMAID COMPATIBILITY MODE (CRITICAL)*:
-# - **TARGET RENDERER**: Legacy Mermaid Engine.
-# - **CAPABILITIES**: Supports ONLY basic nodes and arrows.
-# - **UNSUPPORTED FEATURES (WILL CRASH)**: `subgraph`, `style`, `fill`, `linkStyle`, `classDef`.
-# - **STRATEGY**: Use simple `graph TD` flowcharts without nesting.
-# - **SYNTAX ENFORCEMENT**: You MUST use double quotes for ALL node types:
-#   - SQUARE: `id["Text"]`
-#   - ROUND: `id("Text")`
-#   - CIRCLE: `id(("Text"))`
-#   - RHOMBUS: `id{{"Text"}}`
-# - **MANDATORY**: Wrap code in triple backticks (```mermaid).
-# """
 # `classDef default fill:#c3c3c3,stroke:#111,stroke-width:1px,color:#333,font-size:90%;`
 
 # 3. Visual Engine: Mermaid (Legacy Bluff)
@@ -78,6 +64,7 @@ RULE_MERMAID = """
 - **ID SYNTAX (CRITICAL)**:
   - Node IDs must be **SINGLE WORD** alphanumeric (e.g., `NodeA`, `HPA`, `Root`).
   - **ILLEGAL**: IDs with spaces (e.g., `Acute Stress` -> CRASH).
+  - **ILLEGAL**: Trailing spaces (e.g., `mindmap  ` -> CRASH).
 - **LABEL SYNTAX**:
   - Use double quotes for ALL labels: `id["Text Content"]`.
   - Use `<br/>` for line breaks.
@@ -91,7 +78,7 @@ RULE_MERMAID = """
 
 
 # 4. Closing Standard
-MOD_TAKEAWAYS = """
+MOD_TAKEAWAYS = f"""
 CLOSING (Use this EXACT format):
 > **📌 Key Takeaways**
 > * **Label 1**: Point 1
@@ -99,7 +86,7 @@ CLOSING (Use this EXACT format):
 > ...
 
 - MANDATORY: The header "**Key Takeaways**" must be BOLD. The bullet points must be on separate lines inside the blockquote.
-- END exactly at the Key Takeaways box.
+- END exactly at the Key Takeaways
 """
 
 # --- MERMAID EXAMPLES ---
@@ -172,160 +159,91 @@ MERMAID_EXAMPLES = """
 """
 
 # --- PROMPT TEMPLATES ---
-
 # Uses: MOD_TAKEAWAYS
 NANO_PROMPT = f"""
-The input is an existing technical report. 
-TASK: Distill it into a 'Flash Brief' (max {{NANO_LENGTH}} words) for quick mobile reading.
-
+[SYSTEM: SILENT_MODE=ON]
+ACTION: Compress the following text into a 'Flash Brief' (max {{NANO_LENGTH}} words).
 1. LANGUAGE PROTOCOL:
    {{LANGUAGE_INSTRUCTION}}
-
 2. DESTRUCTIVE EDITING:
-   - IGNORE all visual syntax (Mermaid, Tables, Code blocks).
-   - IGNORE structural boilerplate (Intro, Methodology).
-
-3. OUTPUT FORMAT (Plain Text Only):
-   - **## 🎯 Nano Brief** 
-     A single, dense paragraph with the core conclusion. Start immediately.
-
+   - IGNORE all visual syntax (Mermaid, Tables).
+   - IGNORE boilerplate.
+3. OUTPUT FORMAT (Strict Markdown):
+   - Start IMMEDIATELY with: ## 🎯 Nano Brief
+   - Follow with a single dense paragraph.
    {MOD_TAKEAWAYS}
-
-4. CONSTRAINT:
-   - NO introductory text. NO "Here is the summary".
-   - Must use the format defined above.
+4. NEGATIVE CONSTRAINTS:
+   - NO "Here is the summary".
+   - NO "Based on the text".
+   - NO bolding of headers.
 """
 
 # Uses: MOD_FORMATTING_CORE, RULE_TABLES, MOD_TAKEAWAYS
 TABLE_PROMPT = f"""
-Analyze the input and reorganize it into a structured executive report.
-
+[SYSTEM: SILENT_MODE=ON]
+ACTION: Reorganize the text into a structured executive report.
 0. LANGUAGE PROTOCOL:
    {{LANGUAGE_INSTRUCTION}}
-
 1. REPORT STRUCTURE:
-   - **## 🎯 Executive Overview**
-     (Mandatory New Line): Write a concise thesis (3-5 lines) summarizing the data trends or core findings.
-     (Constraint): Normal text only (No Bold/Headers).
-
+   - Start IMMEDIATELY with: ## 🎯 Executive Overview
+     (Mandatory New Line): Write a concise thesis (3-5 lines).
 2. DATA & COMPARISONS (TABLES):
    {RULE_TABLES}
-   - FORBIDDEN: NEVER use bullet lists, Mermaid diagrams or any code-based visualization.
-
-3. NARRATIVE FLOW (CRITICAL):
-   - **PRE-TABLE INSIGHT**: Mandatory. Write a specific **Analytical Insight** (2-3 lines) *BEFORE* every table.
-     - *Bad:* "The following table shows the data."
-     - *Good:* "The data reveals a critical shift in X, driven primarily by Y factors listed below."
-   - **POST-TABLE**: **FORBIDDEN**. Do NOT write summaries or remarks *after* the table. Move strictly to the divider (---).
+   - FORBIDDEN: Bullet lists, Mermaid diagrams.
+3. NARRATIVE FLOW:
+   - **PRE-TABLE INSIGHT**: Mandatory 2-3 lines *BEFORE* every table.
    {MOD_FORMATTING_CORE}
-
 4. CLOSING:
    {MOD_TAKEAWAYS}
-
-GOAL: Professional, visual, strictly technical report. Insight -> Table -> Next Section.
 """
 
 # Uses: MOD_FORMATTING_CORE, RULE_TABLES, RULE_MERMAID, MOD_TAKEAWAYS
 SCHEMATIC_PROMPT = f"""
-Analyze the input and reorganize it into a structured technical report.
-
+[SYSTEM: SILENT_MODE=ON]
+ACTION: Reorganize the text into a visual technical report.
 0. LANGUAGE PROTOCOL:
    {{LANGUAGE_INSTRUCTION}}
-
-1. REPORT STRUCTURE (STRICT FLOW):
-   - **## 🎯 Executive Overview**
-     (Mandatory New Line): Write a concise thesis (3-5 lines).
-     (Constraint): Normal text only (No Bold/Headers).
-
+1. REPORT STRUCTURE:
+   - Start IMMEDIATELY with: ## 🎯 Executive Overview
+     (Mandatory New Line): Write a concise thesis.
    - **## <Emoji> Section Header**
-     (Repeat for each main topic).
-
-   - **Analytical Context**
-     Write a brief paragraph (2-3 lines) explaining the logic *BEFORE* the visual.
-
-   - **[VISUAL CONTENT]**
-     Insert the Visual Element immediately here.
-     *STRICT FORMATTING RULES*:
-     - **IF TABLE**: Write **RAW** Markdown (start lines with `|`). **FORBIDDEN**: Backticks/Code blocks.
-     - **IF MERMAID**: MUST wrap in triple backticks (```mermaid).
-     - **ALL**: Do NOT print labels like "Figure 1:" or "Table A:".
-
-2. VISUALIZATION STRATEGY (Mermaid > Tables):
-   - **HIERARCHY**: Use `mermaid` (Mindmap or Graph).
-   - **DATA**: Use Tables for flat lists/specs.
-   - **NO REDUNDANCY**: Do not repeat diagram content in tables.
+   - **Analytical Context** (2-3 lines before visual).
+   - **[VISUAL CONTENT]** (Mermaid or Table).
+2. VISUALIZATION STRATEGY:
+   - Use `mermaid` (Mindmap/Graph) for hierarchy/flows.
+   - Use Tables for data.
    {MOD_FORMATTING_CORE}
-
 3. VISUAL ENGINE RULES:
    {RULE_MERMAID}
    {RULE_TABLES}
-
 4. CLOSING:
    {MOD_TAKEAWAYS}
-
 {{MERMAID_EXAMPLES}}
-
-GOAL: Visual-first technical report. Flow: Overview -> Header -> Context -> Visual.
 """
 
 # Uses: MOD_IDENTITY, RULE_TABLES, RULE_MERMAID, MOD_TAKEAWAYS
 BRIEF_PROMPT = f"""
-Analyze the input and reorganize it into a SINGLE unified executive report. 
-
+[SYSTEM: SILENT_MODE=ON]
+ACTION: Unified Executive Report Generation.
 {MOD_IDENTITY}
-
-1. LANGUAGE & SOURCE PROTOCOL (STRICT):
+1. LANGUAGE & SOURCE PROTOCOL:
    {{LANGUAGE_INSTRUCTION}}
-   - ZERO PREAMBLE: Start immediately with the first content block. No intro meta-talk. 
-
-2. STRUCTURE & TEMPLATE ARCHITECTURE:
-   Your report MUST strictly follow this hierarchical sequence (DO NOT print "BLOCK" labels):
-   - [BLOCK 0] Executive Overview: MUST start with the header '## 🎯 Executive Overview'. Followed by a concise thesis ({{OVERVIEW_LENGTH}}). Focus strictly on the core conclusion.
-   - [BLOCK 1..N] Macro-topics (Repeat for every major section):
-     - Separator (---) 
-     - ## Heading (preceded by emoji).
-     - **Concept Synthesis**: ({{SYNTESYS_LENGTH}}) Fact-based summary. FORMAT: Strictly continuous paragraphs. Style: Dry, technical, zero fluff. No adjectives.
-       *** CRITICAL OVERRIDE: If input data for this topic is scarce/short, IGNORE length target. Be concise. DO NOT invent filler content. ***
-     - **Analytical Insight**: ({{ANALYSYS_LENGTH}}) Contextual explanation leading into the visual.
-     - **Visual Element**: MANDATORY. Insert the most appropriate visual for this section:
-       - Use a **TABLE** for data lists, comparisons, specs, or flat chronologies.
-       - Use a **MERMAID MINDMAP** (`mindmap`) if the section describes a hierarchy, taxonomy, or complex structure.
-       - Use a **MERMAID GRAPH** (`graph TD`) if the section describes a flow or process.
-   - [FINAL BLOCK] 📌 Key Takeaways (blockquote >).
-
-3. VISUAL ELEMENT RULES:
-   - VISUAL ACCESSIBILITY: Ensure high contrast (dark text on light nodes, light text on dark nodes).
-   - NARRATIVE PRIORITY (STRICT): **EVERY** visual element (including Mermaid Mindmaps/Graphs) MUST be preceded by `Concept Synthesis` and `Analytical Insight` blocks. NEVER output a 'naked' diagram under a header.
-   - NO BULLET POINTS (STRICT): Bullet lists are FORBIDDEN inside the synthesis blocks. Convert simple lists into TABLES. **CRITICAL OVERRIDE: If the input contains NESTED/MULTI-LEVEL lists, YOU MUST visualize them using a Mermaid `mindmap` or `graph TD`.**
+   - START IMMEDIATELY with: ## 🎯 Executive Overview
+2. STRUCTURE:
+   - [BLOCK 0] Executive Overview: Concise thesis ({{OVERVIEW_LENGTH}}).
+   - [BLOCK 1..N] Macro-topics:
+     - --- 
+     - ## <Emoji> Heading 
+     - **Concept Synthesis**: ({{SYNTESYS_LENGTH}}) No bullets.
+     - **Analytical Insight**: ({{ANALYSYS_LENGTH}}) Context for visual.
+     - **Visual Element**: Table OR Mermaid (Mindmap/Graph).
+   - [FINAL BLOCK] Key Takeaways.
+3. VISUAL RULES:
+   - EVERY visual must have context before it.
+   - NO bullet points in synthesis.
    {RULE_TABLES}
    {RULE_MERMAID}
-
 {{MERMAID_EXAMPLES}}
-
-5. REFERENCE TEMPLATE:
-
----
-
-## 🎯 Executive Overview
-
-A dense {{OVERVIEW_LENGTH}} words summary.
-
----
-
-## ⚙️ Foundational Logic
-
-**Concept Synthesis**: {{SYNTESYS_LENGTH}} words block. Do NOT use bullet points here. Write a dense, factual summary.
-
-**Analytical Insight**: {{ANALYSYS_LENGTH}} words block explaining the visual below.
-
-    ```mermaid
-    graph TD
-        A["Main Concept"] --> B["Component"]
-    ```
-(OR Table OR Mindmap)
-
----
-
 6. CLOSING:
    {MOD_TAKEAWAYS}
 """
@@ -723,18 +641,22 @@ class Filter:
 
     def _get_language_instruction(self, lang_code: Optional[str]) -> str:
         """Generate the language instruction string."""
+        # FIX: Added strict silence protocol to prevent Llama 3 meta-talk
+        silence = "- SILENT EXECUTION: Do akcnoledge or explain the language in use. Start DIRECTLY with the header."
         if lang_code:
             target_lang = lang_code.upper()
             return (
+                f"{silence}\n"
                 f"- IGNORE input language. TARGET LANGUAGE IS {target_lang}.\n"
                 f"   - TRANSLATION: You MUST translate the content into {target_lang}.\n"
                 f"   - MANDATORY: Write the ENTIRE response in {target_lang}."
             )
         else:
             return (
-                "- DETECT the language of the '=== INPUT TO PROCESS ===' below.\n"
-                "- MANDATORY: Respond in the EXACT SAME language as the detected input.\n"
-                "- CRITICAL: If the input is in English, you MUST respond in English."
+                f"{silence}\n"
+                f"- DETECT the language of the '=== INPUT TO PROCESS ===' below.\n"
+                f"- MANDATORY: Respond in the EXACT SAME language as the detected input.\n"
+                f"- CRITICAL: If the input is in English, you MUST respond in English."
             )
 
     def _resolve_brief_mode(
@@ -746,16 +668,24 @@ class Filter:
         2. Content Length (Smart Threshold)
         3. Watermark detection (Recursive)
         """
-        # Calculate word count (Cleaning <think> blocks)
+        # FIX: Obfuscated pattern to prevent UI rendering bugs with thinking tags
+        think_pattern = r"<" + "think>.*?</" + "think>"
+
+        # Calculate word count (Cleaning thinking blocks)
         clean_content = re.sub(
-            r"<think>.*?</think>", "", content, flags=re.DOTALL
+            think_pattern, "", content, flags=re.DOTALL
         ).strip()
+
         input_words = len(clean_content.split())
         smart_threshold = self.user_valves.smart_nano_threshold
 
         # Logic Variables
         explicit_mode = parsed["target_mode"]  # nano, schematic, table, brief, or None
-        user_wants_nano = explicit_mode == "nano" or EB_WATERMARK in content
+
+        # Fix OWUI v0.8.x
+        is_recursive = "## 🎯 Executive Overview" in content
+
+        user_wants_nano = explicit_mode == "nano" or is_recursive
 
         # Auto-switch Logic: implicit mode (>>) AND text is short AND threshold enabled
         force_smart_nano = (
@@ -833,12 +763,15 @@ class Filter:
             "If ambiguous or mixed, default to ENGLISH." if not lang_code else ""
         )
 
+        # FIX: "Raw Data" approach.
+        # We present the input as a data block to be processed, not a conversation topic.
         return (
             f"{prompt}\n\n"
-            f"=== INPUT TO PROCESS ===\n"
+            f"*** BEGIN SOURCE DATA ***\n"
             f"{data_content}\n"
-            f"=== END INPUT TO PROCESS ===\n\n"
-            f"{fallback_instr}"
+            f"*** END SOURCE DATA ***\n\n"
+            f"{fallback_instr}\n\n"
+            f"SYSTEM OVERRIDE: DO NOT CHAT. DO NOT EXPLAIN. OUTPUT ONLY THE REPORT STARTING WITH '##'."
         )
 
     async def inlet(
@@ -863,18 +796,21 @@ class Filter:
         if not msg_list:
             return body
 
-        # Multimodal Text Extraction
+        # FIX: Robust Multimodal Text Extraction (v0.4.11)
+        # Iterates through all parts of the message to find text, avoiding list-attribute errors
         last_msg = msg_list[-1].get("content", "")
+
         if isinstance(last_msg, list):
-            # Extract and join all text parts from multimodal array
+            # Join all text parts found in the list (skips images)
             txt = "\n".join(
                 [
-                    item.get("text", "")
-                    for item in last_msg
-                    if item.get("type") == "text"
+                    str(part.get("text", ""))
+                    for part in last_msg
+                    if isinstance(part, dict) and part.get("type") == "text"
                 ]
             )
         else:
+            # Handle standard string content
             txt = str(last_msg)
 
         txt = txt.strip()
@@ -892,6 +828,8 @@ class Filter:
             DebugService(self),
             EmitterService(__event_emitter__, self),
         )
+
+        self.debug.dump(body, "Body")
 
         await self.em.emit_status("🚀 EasyBrief Started", False)
 
@@ -912,9 +850,6 @@ class Filter:
                 if isinstance(prev_content, list)
                 else str(prev_content)
             )
-
-            if EB_WATERMARK in content:
-                self.debug.log("🌊 Recursive Brief detected: Input contains Watermark.")
 
             self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
 
@@ -1010,49 +945,33 @@ class Filter:
         self, body: dict, __user__: dict = None, __event_emitter__=None  # type: ignore
     ) -> dict:
         """Process the outgoing response and restore web search state."""
-
         if self.ctx and self.ctx.model.executed:
-
-            # Apply invisible watermark to identify EB outputs in future turns
-            if (
-                self.ctx.model.is_brief
-                and "messages" in body
-                and len(body["messages"]) > 0
-            ):
-                # FIX: Handle both String and List (Multimodal) output formats
-                last_content = body["messages"][-1]["content"]
-
-                if isinstance(last_content, str):
-                    body["messages"][-1]["content"] += EB_WATERMARK
-                elif isinstance(last_content, list):
-                    # Append invisible text block for multimodal responses
-                    body["messages"][-1]["content"].append(
-                        {"type": "text", "text": EB_WATERMARK}
-                    )
-
             # Restore original model if it was swapped
             if self.ctx.model.original_model:
                 body["model"] = self.ctx.model.original_model
-
             if "features" in body:
                 body["features"]["web_search"] = self.ctx.model.web_search_original
 
-            if self.ctx.model.suppress_output is True:
+            # Handle Output & Debug
+            if "messages" in body and len(body["messages"]) > 0:
+                last_msg = body["messages"][-1]
+                content = last_msg.get("content", "")
+                debug_out = self.debug.emit()
 
-                if "messages" in body and len(body["messages"]) > 0:
-                    body["messages"][-1]["content"] = (
-                        self.output_content + self.debug.emit()
-                    )
-
-            elif self.ctx.model.suppress_output is False:
-
-                if "messages" in body and len(body["messages"]) > 0:
-                    body["messages"][-1]["content"] += self.debug.emit()
+                if self.ctx.model.suppress_output is True:
+                    # Overwrite
+                    last_msg["content"] = self.output_content + debug_out
+                elif self.ctx.model.suppress_output is False:
+                    # Append Safe (Gestisce sia Stringhe che Liste)
+                    if isinstance(content, str):
+                        last_msg["content"] += debug_out
+                    elif isinstance(content, list) and debug_out:
+                        content.append({"type": "text", "text": debug_out})
+                        last_msg["content"] = content
 
             self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
             st_icon = "🎯" if self.ctx.model.is_brief else "🔍"
             await self.em.emit_status(f"{st_icon} {APP_NAME} Done", True)
-
         return body
 
     def _suppress_output(self, body: dict) -> dict:

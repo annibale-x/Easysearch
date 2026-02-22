@@ -1,18 +1,20 @@
-# 🎯 EasyBrief: Executive Reporting & Visual Intelligence
+
+## 🎯 EasyBrief: Executive Reporting & Visual Intelligence
 **Transform chaotic text, massive logs, and web searches into structured, high-density Executive Reports.**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-181717?logo=github&logoColor=white)](https://github.com/annibale-x/open-webui-easybrief)
 ![Open WebUI Filter](https://img.shields.io/badge/Open%20WebUI-Filter-blue?style=flat&logo=openai)
+![License](https://img.shields.io/github/license/annibale-x/EasyLang?color=green)
 
 ---
 
 ## 💡 Core Concept
-
 **EasyBrief is a structural enforcement layer for Open WebUI.**
 
 Its purpose is to allow a decision-maker to grasp the core meaning, logic, and data of a complex topic in **under 3 minutes**.
 
 Unlike standard summarizers that simply truncate text, EasyBrief reorganizes information into a standardized **Executive Report** format (approx. 800-1600 words). It forces the LLM to abandon conversational fillers and prioritize:
+
 *   **Hierarchical Structure**: Executive Overviews, Concept Synthesis, and Analytical Insights.
 *   **Visual Data**: Markdown Tables for data and Mermaid Diagrams for logic/flows.
 *   **High Compression**: It is designed to ingest large amounts of text. **Note:** If you feed it 100,000 words, it will still output a max of ~2,000 words. This implies a **50:1 compression ratio**, meaning fine details will be sacrificed in favor of macro-trends and critical logic.
@@ -21,17 +23,6 @@ Unlike standard summarizers that simply truncate text, EasyBrief reorganizes inf
 1.  **Context Agnostic**: Works on text you paste, the **previous message** in chat, or web search results.
 2.  **Isolation Mode**: Temporarily ignores previous chat history during generation to ensure the report is strictly based on the provided input (zero hallucinations).
 3.  **Recursive Logic**: Can compress its own outputs (e.g., turning a Standard Brief into a Nano Brief).
-
----
-
-## ⚠️ Important Note on Documents (RAG)
-
-**EasyBrief operates on the active context window.**
-It does **not** automatically scan files inside Open WebUI's Vector Database (RAG).
-*   **Supported**: Text you paste directly, or text explicitly retrieved by the LLM into the chat window.
-*   **Not Supported (Yet)**: Uploading a PDF and expecting EasyBrief to read it without the LLM first retrieving the content.
-
-> *🚀 **Roadmap**: A strictly experimental branch is currently in development to support native document parsing (PDF/Images) directly within the filter pipeline.*
 
 ---
 
@@ -48,14 +39,16 @@ It does **not** automatically scan files inside Open WebUI's Vector Database (RA
 
 ---
 
-## 🎮 Command Reference
-
+## ⚡ Command Reference
 Syntax: `[WebPrefix][Mode][BriefSuffix]` -> e.g., `?t>`
+
 *   **Suffix**: Always ends with `>` to trigger a Brief.
 *   **Prefix**: Start with `?` to enable Web Search.
 
 ### 1. Local Context (Analyze Text)
 Use these commands to process **text you paste** OR to summarize the **last message** received from the LLM.
+
+> **📱 Mobile Friendly**: EasyBrief automatically fixes "smart quotes". If your phone types `»` instead of `>>`, it will still work perfectly!
 
 | Command | Function |
 | :--- | :--- |
@@ -67,6 +60,7 @@ Use these commands to process **text you paste** OR to summarize the **last mess
 
 ### 2. Web Intelligence (Research & Report)
 Use these to ask a question. The system will search the web and compile the results.
+*⚠️ **Requirement**: Web Search must be enabled in your Open WebUI settings (Google, DDG, Searxng, etc.).*
 
 | Command | Function |
 | :--- | :--- |
@@ -83,14 +77,16 @@ Use these to ask a question. The system will search the web and compile the resu
 | **`??`** | **Auto-Context Search**: Reads the *previous* message in chat, generates a search query automatically, and answers using web results. |
 
 ### 4. Language Control
-Append `:<lang_code>` to any command to force the output language.
+Append `:<language>` to any command to force the output language.
+**Note:** You can use standard codes (e.g., `it`, `es`) or write the full language name (e.g., `spanish`, `español`).
+
 *   `>>:it` (Analyze -> Output in **Italian**)
-*   `?t>:es` (Search -> Output Tables in **Spanish**)
+*   `?t>:spanish` (Search -> Output Tables in **Spanish**)
+*   `n>:japanese` (Nano Brief in **Japanese**)
 
 ---
 
 ## ⚙️ Configuration (User Valves)
-
 You can customize the behavior of EasyBrief via the **Valves** menu in Open WebUI.
 
 ### General Settings
@@ -98,7 +94,7 @@ You can customize the behavior of EasyBrief via the **Valves** menu in Open WebU
     *   *Options:* `brief`, `schematic`, `table`, `nano`.
     *   *Function:* Determines what happens when you type `>>` or `?>`.
 *   **`task_model`**:
-    *   *Function:* **Model Swapping**. Allows you to use a specific model (e.g., GPT-4o, Claude 3.5 Sonnet) for generating Briefs, even if your current chat is using a smaller model (e.g., Llama 3). Leave empty to use the current chat model.
+    *   *Function:* **Model Swapping**. Allows you to use a specific model (e.g., GPT-4o, Claude 3.5 Sonnet) for generating Briefs, even if your current chat is using a smaller/cheaper model (e.g., Llama 3). Leave empty to use the current chat model.
 *   **`debug`**:
     *   *Function:* Enables verbose logging to the console for troubleshooting.
 
@@ -145,3 +141,23 @@ These settings control the verbosity of the **Standard Brief**. You can use **Na
 **Scenario**: You generated a Standard Brief (`b>`) but it's still too long for a quick email update.
 **Action**: Type `n>` (Nano Brief) on the result.
 **Result**: EasyBrief detects the previous output and compresses the 1,200-word report into a 150-word summary suitable for mobile messaging.
+
+---
+
+## ⚠️ Important Note on Documents (RAG)
+
+### ‼️EasyBrief operates on the active context window.
+
+It does **not** automatically scan files inside Open WebUI's Vector Database (RAG) unless they are retrieved.
+*   **Supported**: Text you paste directly, or text explicitly retrieved by the LLM into the chat window.
+*   **Not Supported (Yet)**: Uploading a PDF and expecting EasyBrief to read it without the LLM first retrieving the content.
+
+> *🚀 **Roadmap**: A strictly experimental branch is currently in development to support native document parsing (PDF/Images) directly within the filter pipeline.*
+
+---
+
+### ‼️ Early Release & Beta Notice
+
+While the core logic is solid, it has not yet been extensively stress-tested for all possible edge cases. The filter is currently undergoing intensive development and testing. Please be patient with any anomalies or unexpected behavior. 
+
+If you encounter bugs or logic errors, please open an [issue](https://github.com/annibale-x/open-webui-easybrief/issues) on GitHub.

@@ -1,8 +1,11 @@
-* 2024-05-22: v0.4.11 - Multimodal Stability (Hannibal)
-  * Fix: Robust multimodal input parsing in `inlet` (iterates through content parts to extract text).
-  * Fix: Watermark injection logic in `outlet` now handles list-based content (appends text block instead of string concatenation).
+* 2024-02-22: v0.4.13 - Obfuscated pattern to prevent UI rendering bugs with thinking tags (Hannibal)
+
+* 2024-02-22: v0.4.12 - Silent Mode & Robust Persistence (Hannibal)
+  * Fixed recursion detection logic in `_resolve_brief_mode`. Now relies on the visual signature (`## 🎯`) instead of the invisible watermark, solving persistence issues in Open WebUI DB.
+  * Implemented "SILENT EXECUTION" protocol in prompts and language instructions to stop Llama 3 (8b) models from generating meta-talk.
+  * Refactored all Prompt Templates (Nano, Table, Schematic, Brief) with `[SYSTEM: SILENT_MODE=ON]` header and "Raw Data" structure to prevent prompt leaking.
   
-* 2024-05-22: v0.4.10 - Documentation Overhaul & Syntax Fixes (Hannibal)
+* 2024-02-22: v0.4.10 - Documentation Overhaul & Syntax Fixes (Hannibal)
   * Updated README.md with rigorous command syntax (b>, s>, t>, n>).
   * Clarified RAG/PDF limitations (Context-only processing vs Vector DB).
   * Detailed User Valves configuration with natural language examples.
