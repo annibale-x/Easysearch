@@ -1,3 +1,17 @@
+* 2025-02-19: v0.4.16 - Prompt Refactoring & Pie Chart Fixes (Hannibal)  
+  * Refactored `PROMPT_CONFIG` to use inheritance from `DEFAULT_BRIEF_CONFIG`, reducing duplication.
+  * Added explicit `Pie Charts` rule to `MASTER_PROMPT` to fix syntax errors (`mermaid pie` vs `pie`).
+  * Removed `summary_len` from config, now relying solely on `UserValves.summary_length`.
+  * Removed Pie Chart examples from `brief` and `simple_brief` to prevent hallucination (Recency Bias).
+  * Added "Soft Nudge" instruction ("Use `pie` for market share...") to encourage spontaneous usage when data exists.
+
+* 2025-02-23: v0.4.15 - Modular Prompt Architecture & Compact Model Support (Hannibal)  
+  * Introduced `MASTER_PROMPT` and `PROMPT_CONFIG` for centralized and modular prompt management.
+  * Implemented `simple_brief` mode specifically optimized for compact models (<12B) with simplified visual rules (no Graph TD/LR).
+  * Added robust compact model detection (`_is_compact_model`) using both metadata inspection and name heuristics.
+  * Unified report structure across standard and simple briefs to ensure consistency while adapting visual complexity.
+  * Added `FORCE_SIMPLE_BRIEF` constant to facilitate testing of the simplified prompt logic on all models.
+
 * 2024-02-22: v0.4.14 - Add SIMPLE_BRIEF_PROMPT for stupid models (<12b) (Hannibal)
 
 * 2024-02-22: v0.4.13 - Obfuscated pattern to prevent UI rendering bugs with thinking tags (Hannibal)

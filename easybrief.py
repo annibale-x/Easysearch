@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.14
+version: 0.4.16
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -30,245 +30,163 @@ OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
 
-# --- SHARED RULES (BUILDING BLOCKS) ---
+FORCE_SIMPLE_BRIEF = True
 
-# 1. Formatting & Protocol
-MOD_IDENTITY = """
-CRITICAL: You are a pure, objective technical processing unit. 
-MANDATORY AMNESIA: You must strictly WIPE and FORGET any user-profile data. Focus EXCLUSIVELY on the 'INPUT TO PROCESS'.
-SILENT MODE: Do NOT acknowledge the user. Do NOT explain what you are doing. Output ONLY the report.
+
+# --- CONSTANTS & TEMPLATES (KISS REFACTOR) ---
+
+# Standard Executive Summary Block
+# Note: Standard string (not f-string), uses {LENGTH} for .format()
+SUMMARY_BLOCK_TEMPLATE = """Start your output with:
+
+## 🎯 Executive Summary
+Write a comprehensive thesis. Target length: {LENGTH}.
+
 """
 
-MOD_FORMATTING_CORE = """
-- **META-TALK**: MANDATORY: Do not add any introductory or concluding remarks (e.g., "Here is the report").
-- **HEADERS**: Use H2 (##) for main sections. NO H1.
-- **SPACING**: Insert a horizontal divider (---) between every main section.
-"""
-
-# 2. Visual Engine: Tables
-RULE_TABLES = """
-*STRICT TABLE RULES*:
-- **FORMAT**: Write **RAW** Markdown (start lines with `|`).
-- **FORBIDDEN**: Do NOT wrap tables in backticks or code blocks.
-- **USAGE**: Use tables for all flat lists, data, time-series, and specs.
-- **NO BULLETS**: Convert lists of items into Tables.
-"""
-
-# `classDef default fill:#c3c3c3,stroke:#111,stroke-width:1px,color:#333,font-size:90%;`
-
-# 3. Visual Engine: Mermaid (Legacy Bluff)
-RULE_MERMAID = """
-*MERMAID VISUAL PROTOCOL (STRICT)*:
-- **TYPE**: Use `graph TD` or `graph LR` ONLY.
-- **STRUCTURE**: **FLAT ONLY**. Do NOT use `subgraph`.
-- **ID SYNTAX (CRITICAL)**:
-  - Node IDs must be **SINGLE WORD** alphanumeric (e.g., `NodeA`, `HPA`, `Root`).
-  - **ILLEGAL**: IDs with spaces (e.g., `Acute Stress` -> CRASH).
-  - **ILLEGAL**: Trailing spaces (e.g., `mindmap  ` -> CRASH).
-- **LABEL SYNTAX**:
-  - Use double quotes for ALL labels: `id["Text Content"]`.
-  - Use `<br/>` for line breaks.
-- **CONNECTIONS**:
-  - Use `-->` or `<-->`.
-  - One connection per line. Explicit source and target.
-- **STYLING**:
-  - **FORBIDDEN**: `style`, `fill`, `linkStyle`.
-- **WRAPPER**: Triple backticks (```mermaid).
-"""
-
-
-# 4. Closing Standard
 MOD_TAKEAWAYS = f"""
-CLOSING (Use this EXACT format):
+Exact closing:
+
+---
 > **📌 Key Takeaways**
-> * **Label 1**: Point 1
-> * **Label 2**: Point 2
-> ...
+> * **[LABEL]**: [Description..]
+> * **[LABEL]**: [Description..]
+...
 
-- MANDATORY: The header "**Key Takeaways**" must be BOLD. The bullet points must be on separate lines inside the blockquote.
-- END exactly at the Key Takeaways
+- MANDATORY: Bold headers. Bullet points inside blockquote. Max 8 takeaways. Use the pin emoji.
 """
 
-# --- MERMAID EXAMPLES ---
+# Default Loop Rule (Dichiarativo, non imperativo)
+DEFAULT_REPEAT_RULE = "Analyze each Main Topic found in text:"
 
-MERMAID_EXAMPLES = """
-5. MERMAID SYNTAX REFERENCE (STRICTLY v8.0 COMPATIBLE):
-   - SYSTEM CONSTRAINT: The renderer is OLD. It DOES NOT support `subgraph`, `style`, `linkStyle`, or `fill`.
-   - USE ONLY: `graph TD`, `graph LR`, `mindmap`.
-   - QUOTES: Mandatory for ALL brackets. `["Text"]`, `("Text")`, `{"Text"}`.
-
-   CORRECT PATTERNS:
-    ```mermaid
-    graph TD
-      A["Concept A"] --> B("Concept B (Rounded)")
-      B -- "Connection" --> C{"Concept C (Decision)"}
-      C --> D(("Concept D (Circle)"))
-      ...  
-    ```
-    ```mermaid
-    graph LR
-        A["Root Cause"] --> B("Process A (Standard)")
-        A --> C(("Process B (Critical)"))
-        A --> D["Process C (Secondary)"]
-        B -- "Condition 1" --> E{"Systemic Result"}
-        C -- "Condition 2" --> E
-        D -- "Condition 3" --> E
-        E --> F["Final Outcome"]
-        B <--> C
-        B <--> D
-        C <--> D
-        ...
-    ```
-    ```mermaid
-    graph TD
-        A["Main System"] 
-            -->|Type 1| B["Sub-System A"]
-            -->|Type 1| E["Sub-System B"]
-            -->|Type 2| F["Sub-System C"]
-            -->|Type 2| G["Sub-System D"]
-        B --> D["Component A1"]
-        B --> E["Component A2"]
-        ...
-    ```
-
-    CORRECT PIE:
-    ```mermaid
-    pie
-      title "Generic Market Distribution"
-      "Category A" : 70
-      "Category B" : 20
-      "Category C" : 5
-      "Others" : 5
-      ...
-    ```
-
-   CORRECT MINDMAP:
-    ```mermaid
+MINDMAP_EXAMPLE = """
+```mermaid
     mindmap
-      root("Main Subject")
-        ("Node")
-          ("Sub-Node")
-          ("Sub-node (wit parens-enclosed text)")
-        ("Node")
-          ("Sub-Node")
-            ("Sub-Sub-Node")
-          ("Sub-Node")
-            ("Sub-Sub-Node") 
-          ... 
-    ```
+      root(("Main Subject"))
+        ("Branch A")
+          ("Detail 1")
+          ("Detail 2")
+            ("Sub Branch C")
+              ("Detail 3")
+        ("Branch B")
+          ("Detail (with parens)")
+    ...
+```
 """
 
-# --- PROMPT TEMPLATES ---
-
-# Uses: MOD_TAKEAWAYS
-NANO_PROMPT = f"""
-[SYSTEM: SILENT_MODE=ON]
-ACTION: Compress the following text into a 'Flash Brief' (max {{NANO_LENGTH}} words).
-1. LANGUAGE PROTOCOL:
-   {{LANGUAGE_INSTRUCTION}}
-2. DESTRUCTIVE EDITING:
-   - IGNORE all visual syntax (Mermaid, Tables).
-   - IGNORE boilerplate.
-3. OUTPUT FORMAT (Strict Markdown):
-   - Start IMMEDIATELY with: ## 🎯 Nano Brief
-   - Follow with a single dense paragraph.
-   {MOD_TAKEAWAYS}
-4. NEGATIVE CONSTRAINTS:
-   - NO "Here is the summary".
-   - NO "Based on the text".
-   - NO bolding of headers.
+TABLE_EXAMPLE = """
+| YOUR HEADING | YOUR HEADING |
+|--------------|--------------|
+| YOUR DATA    | YOUR DATA    |
+...
 """
 
-# Uses: MOD_FORMATTING_CORE, RULE_TABLES, MOD_TAKEAWAYS
-TABLE_PROMPT = f"""
-[SYSTEM: SILENT_MODE=ON]
-ACTION: Reorganize the text into a structured executive report.
-0. LANGUAGE PROTOCOL:
-   {{LANGUAGE_INSTRUCTION}}
-1. REPORT STRUCTURE:
-   - Start IMMEDIATELY with: ## 🎯 Executive Overview
-     (Mandatory New Line): Write a concise thesis (3-5 lines).
-2. DATA & COMPARISONS (TABLES):
-   {RULE_TABLES}
-   - FORBIDDEN: Bullet lists, Mermaid diagrams.
-3. NARRATIVE FLOW:
-   - **PRE-TABLE INSIGHT**: Mandatory 2-3 lines *BEFORE* every table.
-   {MOD_FORMATTING_CORE}
-4. CLOSING:
-   {MOD_TAKEAWAYS}
-"""
+# Base Configuration
+DEFAULT_BRIEF_CONFIG = {
+    "action": "Generate a Structured Executive Report.",
+    # Note: Standard string. Uses {{...}} because the code uses .replace("{{SYNTESYS_LENGTH}}", ...)
+    "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n**VISUAL**: Select the best format from the ALLOWED list below.",
+    "visual_rules": "**ALLOWED**: Tables, `mindmap` (Concepts), `graph TD` (Flows), `pie` (Distribution).",
+    "repeat_rule": DEFAULT_REPEAT_RULE,
+    # Note: f-string to inject examples immediately
+    "example": f"""## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+**Concept Synthesis**: [Text...]
+**Analytical Insight**: [Text...]
+{TABLE_EXAMPLE}
+---
+## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+**Concept Synthesis**: [Text...]
+**Analytical Insight**: [Text...]
+{MINDMAP_EXAMPLE}
+""",
+}
 
-# Uses: MOD_FORMATTING_CORE, RULE_TABLES, RULE_MERMAID, MOD_TAKEAWAYS
-SCHEMATIC_PROMPT = f"""
-[SYSTEM: SILENT_MODE=ON]
-ACTION: Reorganize the text into a visual technical report.
-0. LANGUAGE PROTOCOL:
-   {{LANGUAGE_INSTRUCTION}}
-1. REPORT STRUCTURE:
-   - Start IMMEDIATELY with: ## 🎯 Executive Overview
-     (Mandatory New Line): Write a concise thesis.
-   - **## <Emoji> Section Header**
-   - **Analytical Context** (2-3 lines before visual).
-   - **[VISUAL CONTENT]** (Mermaid or Table).
-2. VISUALIZATION STRATEGY:
-   - Use `mermaid` (Mindmap/Graph) for hierarchy/flows.
-   - Use Tables for data.
-   {MOD_FORMATTING_CORE}
-3. VISUAL ENGINE RULES:
-   {RULE_MERMAID}
-   {RULE_TABLES}
-4. CLOSING:
-   {MOD_TAKEAWAYS}
-{{MERMAID_EXAMPLES}}
-"""
+# Configuration for each mode
+PROMPT_CONFIG = {
+    "nano": {
+        "action": "Compress text into a Flash Brief.",
+        "structure": "## 🎯 Nano Brief\n(Single dense paragraph of {LENGTH}).",
+        "visual_rules": "**NO VISUALS**: Text ONLY.",
+        "repeat_rule": "NANO BRIEF CONTENT:",
+        "example": "## 🎯 Nano Brief\n[Content...]",
+    },
+    "table": {
+        "action": "Reorganize text into a Structured Report.",
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Insight**: (2-3 sentences).\n**Visual**: Raw Markdown Table ONLY.",
+        "visual_rules": "ALLOWED: Tables ONLY.\nFORBIDDEN: Mermaid diagrams.",
+        "example": f"""## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+**Insight**: [Analysis...]
+{TABLE_EXAMPLE}
+""",
+    },
+    "schematic": {
+        "action": "Reorganize text into a Visual Technical Report.",
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Context**: (1 sentence).\n**Visual**: Mermaid Mindmap OR Graph TD.",
+        "visual_rules": "ALLOWED: `mindmap`, `graph TD`.\nNO Subgraphs.",
+        "example": f"""## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+**Context**: [Context...]
+{MINDMAP_EXAMPLE}
+""",
+    },
+    "brief": {},  # Uses DEFAULT_BRIEF_CONFIG
+    "simple_brief": {
+        "action": "Generate a Structured Executive Report.",
+        "visual_rules": "ALLOWED: Tables, `mindmap`, `pie`.\nFORBIDDEN: `graph`.",
+        "example": f"""## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+**Concept Synthesis**: [Text...]
+**Analytical Insight**: [Text...]
+{TABLE_EXAMPLE}
+---
+## [YOUR EMOJI HERE] [TOPIC]
+**Concept Synthesis**: [Text...]
+**Analytical Insight**: [Text...]
+{MINDMAP_EXAMPLE}
+""",
+    },
+}
 
-# Uses: MOD_IDENTITY, RULE_TABLES, RULE_MERMAID, MOD_TAKEAWAYS
-BRIEF_PROMPT = f"""
-[SYSTEM: SILENT_MODE=ON]
-ACTION: Unified Executive Report Generation.
-{MOD_IDENTITY}
-1. LANGUAGE & SOURCE PROTOCOL:
-   {{LANGUAGE_INSTRUCTION}}
-   - START IMMEDIATELY with: ## 🎯 Executive Overview
-2. STRUCTURE:
-   - [BLOCK 0] Executive Overview: Concise thesis ({{OVERVIEW_LENGTH}}).
-   - [BLOCK 1..N] Macro-topics:
-     - --- 
-     - ## <Emoji> Heading 
-     - **Concept Synthesis**: ({{SYNTESYS_LENGTH}}) No bullets.
-     - **Analytical Insight**: ({{ANALYSYS_LENGTH}}) Context for visual.
-     - **Visual Element**: Table OR Mermaid (Mindmap/Graph).
-   - [FINAL BLOCK] Key Takeaways.
-3. VISUAL RULES:
-   - EVERY visual must have context before it.
-   - NO bullet points in synthesis.
-   {RULE_TABLES}
-   {RULE_MERMAID}
-{{MERMAID_EXAMPLES}}
-6. CLOSING:
-   {MOD_TAKEAWAYS}
-"""
+# The Base Template (KISS Version - Ultra Clean)
+MASTER_PROMPT = f"""
+[SYSTEM]
+Role: Analyst. Task: {{ACTION_TYPE}}
+Mode: Silent.
 
-# NEW: Optimized for <12B models and "Flash/Mini" variants
-# Removes complex Graph syntax, focuses on Tables and Mindmaps
-SIMPLE_BRIEF_PROMPT = f"""
-[SYSTEM: SILENT_MODE=ON]
-ACTION: Summarize text into a clean Structured Report.
-{MOD_IDENTITY}
-1. LANGUAGE PROTOCOL:
-   {{LANGUAGE_INSTRUCTION}}
-2. STRUCTURE (Strict Markdown):
-   - ## 🎯 Executive Summary
-     (Write a concise summary paragraph).
-   - ## 📊 Key Data Points
-     (Use Markdown Tables for ALL data/lists).
-   - ## 🧠 Concept Map
-     (Use `mermaid` mindmap ONLY. Do NOT use graph TD/LR).
-   {MOD_TAKEAWAYS}
-3. RULES:
-   - NO conversational filler ("Here is the report").
-   - STRICT Markdown formatting.
-   {RULE_TABLES}
+[LANGUAGE]
+{{LANGUAGE_INSTRUCTION}}
+
+[STRUCTURE]
+{{SUMMARY_BLOCK}}
+
+{{REPEAT_RULE}}
+{{STRUCTURE_BLOCK}}
+
+{MOD_TAKEAWAYS}
+
+[VISUALS]
+**Status**:
+{{VISUAL_RULES}}
+IF topic is hierarchical/branches → USE mindmap Mermaid
+IF comparative/numerical data → USE Markdown table
+IF percentage data (ex: 40% A, 30% B) → USE pie Mermaid
+
+
+Examples:
+Hierarchical: mindmap root(("Nervous System")) ("CNS") ("Brain")
+Comparative: | Lobe | Function |
+| Frontal | Planning |
+Percentage: pie title Shares "A" : 40 "B" : 30
+
+
+
+**Syntax**:
+1. **Tables**: Markdown. No code blocks.
+2. **Mindmaps**: Mermaid `mindmap`.
+   - Use `("Node Text")`.
+   - One node per line. Strict indentation (2 spaces).
+3. **Others**: If allowed, use standard Mermaid syntax.
+
+[TEMPLATE]
+{{EXAMPLE_BLOCK}}
 """
 
 
@@ -489,17 +407,17 @@ class Filter:
             le=500,
             description="Target word count for Nano briefs (Range: 50-500).",
         )
-        overview_length: str = Field(
+        summary_length: str = Field(  # RENAMED from overview_length
             default="max 100 words",
-            description="Target length for Executive Overview (Standard Brief).",
+            description="Target length for Summary Overview.",
         )
         synthesis_length: str = Field(
             default="max 80 words",
-            description="Target length for Concept Synthesis (Standard Brief).",
+            description="Target length for Concept Synthesis.",
         )
         analysis_length: str = Field(
             default="max 40 words",
-            description="Target length for Analytical Context (Standard Brief).",
+            description="Target length for Analytical Context.",
         )
         debug: bool = Field(default=False)
 
@@ -664,22 +582,20 @@ class Filter:
 
     def _get_language_instruction(self, lang_code: Optional[str]) -> str:
         """Generate the language instruction string."""
-        # FIX: Added strict silence protocol to prevent Llama 3 meta-talk
-        silence = "- SILENT EXECUTION: Do akcnoledge or explain the language in use. Start DIRECTLY with the header."
+        # FIX: Typo fixed (acknowledge) and simplified for 8B models
+        silence = "SILENT MODE: Do not explain. Start with header."
         if lang_code:
             target_lang = lang_code.upper()
             return (
                 f"{silence}\n"
-                f"- IGNORE input language. TARGET LANGUAGE IS {target_lang}.\n"
-                f"   - TRANSLATION: You MUST translate the content into {target_lang}.\n"
-                f"   - MANDATORY: Write the ENTIRE response in {target_lang}."
+                f"TARGET LANGUAGE: {target_lang}.\n"
+                f"Translate content to {target_lang}."
             )
         else:
             return (
                 f"{silence}\n"
-                f"- DETECT the language of the '=== INPUT TO PROCESS ===' below.\n"
-                f"- MANDATORY: Respond in the EXACT SAME language as the detected input.\n"
-                f"- CRITICAL: If the input is in English, you MUST respond in English."
+                f"DETECT input language.\n"
+                f"Respond in the SAME language."
             )
 
     def _resolve_brief_mode(
@@ -695,9 +611,7 @@ class Filter:
         think_pattern = r"<" + "think>.*?</" + "think>"
 
         # Calculate word count (Cleaning thinking blocks)
-        clean_content = re.sub(
-            think_pattern, "", content, flags=re.DOTALL
-        ).strip()
+        clean_content = re.sub(think_pattern, "", content, flags=re.DOTALL).strip()
 
         input_words = len(clean_content.split())
         smart_threshold = self.user_valves.smart_nano_threshold
@@ -749,51 +663,69 @@ class Filter:
 
         return final_mode, None, f"✨ Generating a {label}.."
 
-    def _is_compact_model(self, model_id: str) -> bool:
+    def _is_compact_model(self, model_input: Any) -> bool:
         """
         Detect if the model is 'compact' (< 12B parameters or 'mini' variant).
-        Uses Metadata for Local/Ollama and Name Heuristics for Cloud/API.
+        Accepts either a Model ID (str) or a Model Object (dict) from metadata.
         """
         try:
-            if not self.request or not hasattr(self.request.app.state, "MODELS"):
-                return False
+            model_id = ""
+            param_str = ""
 
-            # 1. Access global model registry
-            models = getattr(self.request.app.state, "MODELS", {})
-            meta = models.get(model_id, {})
-            
-            # 2. Strategy A: Metadata Check (Ollama/Local)
-            details = meta.get("ollama", {}).get("details", {})
-            param_str = details.get("parameter_size", "")
+            # 1. Resolve Input Source (Dict vs String)
+            if isinstance(model_input, dict):
+                # Direct metadata provided in body
+                model_id = model_input.get("id", "") or model_input.get("name", "")
+                # Path: ollama -> details -> parameter_size
+                param_str = (
+                    model_input.get("ollama", {})
+                    .get("details", {})
+                    .get("parameter_size", "")
+                )
+            else:
+                # Fallback: String ID provided -> Lookup in App State
+                model_id = str(model_input)
+                if self.request and hasattr(self.request.app.state, "MODELS"):
+                    meta = getattr(self.request.app.state, "MODELS", {}).get(
+                        model_id, {}
+                    )
+                    param_str = (
+                        meta.get("ollama", {})
+                        .get("details", {})
+                        .get("parameter_size", "")
+                    )
 
+            # 2. Strategy A: Metadata Check (Explicit Size)
             if param_str:
                 match = re.search(r"(\d+(?:\.\d+)?)", param_str)
                 if match:
                     size = float(match.group(1))
-                    # Threshold: Models < 12B are considered "Compact"
                     is_compact = size < 12.0
                     if is_compact and self.debug:
-                        self.debug.log(f"Compact Model Detected (Size): {model_id} ({size}B)")
+                        self.debug.log(
+                            f"Compact Model Detected (Size): {model_id} ({size}B)"
+                        )
                     return is_compact
 
             # 3. Strategy B: Name Heuristics (Cloud/API Fallback)
             id_lower = model_id.lower()
 
-            # Semantic keywords for "stupid"/fast models
+            # Semantic keywords
             compact_keywords = ["mini", "flash", "haiku", "nano", "small"]
             if any(k in id_lower for k in compact_keywords):
                 if self.debug:
                     self.debug.log(f"Compact Model Detected (Keyword): {model_id}")
                 return True
 
-            # Regex for explicit size in name (e.g., "llama3-8b", "gemma-2b")
-            # Captures the number before 'b' to avoid false positives like '70b' via math check
+            # Regex for explicit size in name (e.g. 8b, 7b)
             size_match = re.search(r"(\d+(?:\.\d+)?)b(?:$|[^a-z0-9])", id_lower)
             if size_match:
                 size = float(size_match.group(1))
                 if size < 12.0:
                     if self.debug:
-                        self.debug.log(f"Compact Model Detected (Regex): {model_id} ({size}B)")
+                        self.debug.log(
+                            f"Compact Model Detected (Regex): {model_id} ({size}B)"
+                        )
                     return True
 
             return False
@@ -803,48 +735,78 @@ class Filter:
                 self.debug.log(f"Model detection error: {e}")
             return False
 
-
     def _get_prompt_template(
-        self, mode: str, target_len: Optional[int], lang_instr: str, model_id: str
+        self, mode: str, target_len: Optional[int], lang_instr: str, model_info: Any
     ) -> str:
         """Select and format the correct prompt template based on mode and model capability."""
-        
-        # Check for compact model to downgrade complexity
-        is_compact = self._is_compact_model(model_id)
-        
-        if mode == "nano":
-            return NANO_PROMPT.format(
-                NANO_LENGTH=target_len, LANGUAGE_INSTRUCTION=lang_instr
-            )
 
-        elif mode == "schematic":
-            return SCHEMATIC_PROMPT.format(
-                MERMAID_EXAMPLES=MERMAID_EXAMPLES,
-                LANGUAGE_INSTRUCTION=lang_instr,
-            )
+        # Check for compact model OR forced override
+        is_compact = self._is_compact_model(model_info) or FORCE_SIMPLE_BRIEF
 
-        elif mode == "table":
-            return TABLE_PROMPT.format(LANGUAGE_INSTRUCTION=lang_instr)
+        # Determine config key
+        cfg_key = mode
+        if mode == "brief" and is_compact:
+            cfg_key = "simple_brief"
+            if self.debug:
+                mid = (
+                    model_info.get("id", "?")
+                    if isinstance(model_info, dict)
+                    else str(model_info)
+                )
+                self.debug.log(f"Using SIMPLE_BRIEF config for {mid}")
 
+        # Merge Logic: Start with Default Brief, then apply Specific Config
+        # Only brief/simple_brief inherit from DEFAULT_BRIEF_CONFIG
+        if cfg_key in ["brief", "simple_brief"]:
+            config = DEFAULT_BRIEF_CONFIG.copy()
+            config.update(PROMPT_CONFIG.get(cfg_key, {}))
         else:
-            # Standard Brief Logic
-            if is_compact:
-                # Use Simplified Prompt for <12B/Flash models
-                if self.debug:
-                    self.debug.log(f"Using SIMPLE_BRIEF_PROMPT for {model_id}")
-                return SIMPLE_BRIEF_PROMPT.format(
-                    LANGUAGE_INSTRUCTION=lang_instr,
-                )
-            else:
-                # Use Full Power Prompt for >12B models
-                return BRIEF_PROMPT.format(
-                    OVERVIEW_LENGTH=self.user_valves.overview_length,
-                    SYNTESYS_LENGTH=self.user_valves.synthesis_length,
-                    ANALYSYS_LENGTH=self.user_valves.analysis_length,
-                    LANGUAGE_INSTRUCTION=lang_instr,
-                    MERMAID_EXAMPLES=MERMAID_EXAMPLES,
-                )
+            config = PROMPT_CONFIG.get(cfg_key, DEFAULT_BRIEF_CONFIG)
 
+        # Determine Summary Block & Lengths
+        if mode == "nano":
+            # Nano: No separate summary block, length goes into structure
+            summary_block = ""
+            length_val = (
+                f"{target_len}"
+                if target_len
+                else str(self.user_valves.max_nano_brief_length)
+            )
+        else:
+            # Standard: Use template + UserValve
+            summary_block = SUMMARY_BLOCK_TEMPLATE.format(
+                LENGTH=self.user_valves.summary_length
+            )
+            length_val = ""  # Not used in structure for standard modes
+
+        # Build Prompt
+        prompt = MASTER_PROMPT.format(
+            ACTION_TYPE=config["action"],
+            SUMMARY_BLOCK=summary_block,
+            STRUCTURE_BLOCK=config["structure"].replace(
+                "{LENGTH}", length_val
+            ),  # Inject length for Nano
+            REPEAT_RULE=config.get(
+                "repeat_rule", DEFAULT_REPEAT_RULE
+            ),  # Use default if missing
+            VISUAL_RULES=config["visual_rules"],
+            EXAMPLE_BLOCK=config["example"],
+            LANGUAGE_INSTRUCTION=lang_instr,
+        )
+
+        # Inject dynamic lengths for Standard/Simple Brief
+        if cfg_key in ["brief", "simple_brief"]:
+            prompt = prompt.replace(
+                "{{SYNTESYS_LENGTH}}", self.user_valves.synthesis_length
+            )
+            prompt = prompt.replace(
+                "{{ANALYSYS_LENGTH}}", self.user_valves.analysis_length
+            )
+            # Note: summary_length is already handled above via SUMMARY_BLOCK_TEMPLATE
+
+        self.debug.log(f"Prompt:\n" + prompt)
+
+        return prompt
 
     def _construct_final_message(
         self, prompt: str, content: str, is_search: bool, lang_code: Optional[str]
@@ -988,9 +950,13 @@ class Filter:
                 mode, target_len, status_msg = self._resolve_brief_mode(content, parsed)
                 await self.em.emit_status(status_msg, False)
 
+                # FIX: Extract rich model metadata if available, fallback to ID string
+                model_input = body.get("metadata", {}).get("model") or body.get("model")
+
                 selected_prompt = self._get_prompt_template(
-                    mode, target_len, lang_instruction, body.get("model")
+                    mode, target_len, lang_instruction, model_input
                 )
+
                 instr = self._construct_final_message(
                     selected_prompt, content, parsed["is_search"], parsed["lang"]
                 )
