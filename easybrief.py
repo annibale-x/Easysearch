@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.13
+version: 0.4.14
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -159,6 +159,7 @@ MERMAID_EXAMPLES = """
 """
 
 # --- PROMPT TEMPLATES ---
+
 # Uses: MOD_TAKEAWAYS
 NANO_PROMPT = f"""
 [SYSTEM: SILENT_MODE=ON]
@@ -246,6 +247,28 @@ ACTION: Unified Executive Report Generation.
 {{MERMAID_EXAMPLES}}
 6. CLOSING:
    {MOD_TAKEAWAYS}
+"""
+
+# NEW: Optimized for <12B models and "Flash/Mini" variants
+# Removes complex Graph syntax, focuses on Tables and Mindmaps
+SIMPLE_BRIEF_PROMPT = f"""
+[SYSTEM: SILENT_MODE=ON]
+ACTION: Summarize text into a clean Structured Report.
+{MOD_IDENTITY}
+1. LANGUAGE PROTOCOL:
+   {{LANGUAGE_INSTRUCTION}}
+2. STRUCTURE (Strict Markdown):
+   - ## 🎯 Executive Summary
+     (Write a concise summary paragraph).
+   - ## 📊 Key Data Points
+     (Use Markdown Tables for ALL data/lists).
+   - ## 🧠 Concept Map
+     (Use `mermaid` mindmap ONLY. Do NOT use graph TD/LR).
+   {MOD_TAKEAWAYS}
+3. RULES:
+   - NO conversational filler ("Here is the report").
+   - STRICT Markdown formatting.
+   {RULE_TABLES}
 """
 
 
@@ -726,10 +749,69 @@ class Filter:
 
         return final_mode, None, f"✨ Generating a {label}.."
 
+    def _is_compact_model(self, model_id: str) -> bool:
+        """
+        Detect if the model is 'compact' (< 12B parameters or 'mini' variant).
+        Uses Metadata for Local/Ollama and Name Heuristics for Cloud/API.
+        """
+        try:
+            if not self.request or not hasattr(self.request.app.state, "MODELS"):
+                return False
+
+            # 1. Access global model registry
+            models = getattr(self.request.app.state, "MODELS", {})
+            meta = models.get(model_id, {})
+            
+            # 2. Strategy A: Metadata Check (Ollama/Local)
+            details = meta.get("ollama", {}).get("details", {})
+            param_str = details.get("parameter_size", "")
+
+            if param_str:
+                match = re.search(r"(\d+(?:\.\d+)?)", param_str)
+                if match:
+                    size = float(match.group(1))
+                    # Threshold: Models < 12B are considered "Compact"
+                    is_compact = size < 12.0
+                    if is_compact and self.debug:
+                        self.debug.log(f"Compact Model Detected (Size): {model_id} ({size}B)")
+                    return is_compact
+
+            # 3. Strategy B: Name Heuristics (Cloud/API Fallback)
+            id_lower = model_id.lower()
+
+            # Semantic keywords for "stupid"/fast models
+            compact_keywords = ["mini", "flash", "haiku", "nano", "small"]
+            if any(k in id_lower for k in compact_keywords):
+                if self.debug:
+                    self.debug.log(f"Compact Model Detected (Keyword): {model_id}")
+                return True
+
+            # Regex for explicit size in name (e.g., "llama3-8b", "gemma-2b")
+            # Captures the number before 'b' to avoid false positives like '70b' via math check
+            size_match = re.search(r"(\d+(?:\.\d+)?)b(?:$|[^a-z0-9])", id_lower)
+            if size_match:
+                size = float(size_match.group(1))
+                if size < 12.0:
+                    if self.debug:
+                        self.debug.log(f"Compact Model Detected (Regex): {model_id} ({size}B)")
+                    return True
+
+            return False
+
+        except Exception as e:
+            if self.debug:
+                self.debug.log(f"Model detection error: {e}")
+            return False
+
+
     def _get_prompt_template(
-        self, mode: str, target_len: Optional[int], lang_instr: str
+        self, mode: str, target_len: Optional[int], lang_instr: str, model_id: str
     ) -> str:
-        """Select and format the correct prompt template based on mode."""
+        """Select and format the correct prompt template based on mode and model capability."""
+        
+        # Check for compact model to downgrade complexity
+        is_compact = self._is_compact_model(model_id)
+        
         if mode == "nano":
             return NANO_PROMPT.format(
                 NANO_LENGTH=target_len, LANGUAGE_INSTRUCTION=lang_instr
@@ -745,14 +827,24 @@ class Filter:
             return TABLE_PROMPT.format(LANGUAGE_INSTRUCTION=lang_instr)
 
         else:
-            # Standard Brief
-            return BRIEF_PROMPT.format(
-                OVERVIEW_LENGTH=self.user_valves.overview_length,
-                SYNTESYS_LENGTH=self.user_valves.synthesis_length,
-                ANALYSYS_LENGTH=self.user_valves.analysis_length,
-                LANGUAGE_INSTRUCTION=lang_instr,
-                MERMAID_EXAMPLES=MERMAID_EXAMPLES,
-            )
+            # Standard Brief Logic
+            if is_compact:
+                # Use Simplified Prompt for <12B/Flash models
+                if self.debug:
+                    self.debug.log(f"Using SIMPLE_BRIEF_PROMPT for {model_id}")
+                return SIMPLE_BRIEF_PROMPT.format(
+                    LANGUAGE_INSTRUCTION=lang_instr,
+                )
+            else:
+                # Use Full Power Prompt for >12B models
+                return BRIEF_PROMPT.format(
+                    OVERVIEW_LENGTH=self.user_valves.overview_length,
+                    SYNTESYS_LENGTH=self.user_valves.synthesis_length,
+                    ANALYSYS_LENGTH=self.user_valves.analysis_length,
+                    LANGUAGE_INSTRUCTION=lang_instr,
+                    MERMAID_EXAMPLES=MERMAID_EXAMPLES,
+                )
+
 
     def _construct_final_message(
         self, prompt: str, content: str, is_search: bool, lang_code: Optional[str]
@@ -897,7 +989,7 @@ class Filter:
                 await self.em.emit_status(status_msg, False)
 
                 selected_prompt = self._get_prompt_template(
-                    mode, target_len, lang_instruction
+                    mode, target_len, lang_instruction, body.get("model")
                 )
                 instr = self._construct_final_message(
                     selected_prompt, content, parsed["is_search"], parsed["lang"]

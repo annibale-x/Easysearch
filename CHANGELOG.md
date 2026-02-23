@@ -1,3 +1,5 @@
+* 2024-02-22: v0.4.14 - Add SIMPLE_BRIEF_PROMPT for stupid models (<12b) (Hannibal)
+
 * 2024-02-22: v0.4.13 - Obfuscated pattern to prevent UI rendering bugs with thinking tags (Hannibal)
 
 * 2024-02-22: v0.4.12 - Silent Mode & Robust Persistence (Hannibal)
