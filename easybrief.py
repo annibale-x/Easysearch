@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.16
+version: 0.4.17
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -38,22 +38,24 @@ FORCE_SIMPLE_BRIEF = True
 # Standard Executive Summary Block
 # Note: Standard string (not f-string), uses {LENGTH} for .format()
 SUMMARY_BLOCK_TEMPLATE = """Start your output with:
-
 ## 🎯 Executive Summary
 Write a comprehensive thesis. Target length: {LENGTH}.
-
 """
 
 MOD_TAKEAWAYS = f"""
-Exact closing:
+Closing rules:
+- NO other text after ---
+- EXACT 4 spaces before each > bullet line
+- Bold **LABEL** with **
+- Max 8 bullets
+- FAIL = INVALID OUTPUT
 
+End your response with this exact text block. copy-paste format:
 ---
-> **📌 Key Takeaways**
-> * **[LABEL]**: [Description..]
-> * **[LABEL]**: [Description..]
-...
-
-- MANDATORY: Bold headers. Bullet points inside blockquote. Max 8 takeaways. Use the pin emoji.
+> __📌 Key Takeaways__
+> - [Your label]: [Description ...].
+> - [Your label]: [Description ...].
+---
 """
 
 # Default Loop Rule (Dichiarativo, non imperativo)
@@ -81,67 +83,75 @@ TABLE_EXAMPLE = """
 ...
 """
 
-# Base Configuration
+# NEW: Graph Example for Schematic/Brief modes (Non-Compact only)
+GRAPH_EXAMPLE = """
+```mermaid
+    graph TD
+      A["Start Node"] --> B("End Node")
+      B -- "Label" --> C{"Decision"}
+```
+"""
+
+# NEW: Visual Guidelines Blocks (Logic for selecting the right visual)
+VISUAL_GUIDELINES = {
+    "standard": """IF topic is hierarchical/branches → USE mindmap Mermaid
+IF comparative/numerical data → USE Markdown table
+IF percentage data (ex: 40% A, 30% B) → USE pie Mermaid
+IF process/flow/timeline → USE graph TD Mermaid""",
+    "compact": """IF topic is hierarchical/branches → USE mindmap Mermaid
+IF comparative/numerical data → USE Markdown table
+IF percentage data (ex: 40% A, 30% B) → USE pie Mermaid
+NOTE: Do NOT use graph/flowcharts.""",
+    "table": "ALWAYS use Markdown tables for data representation.",
+    "schematic": """IF topic is hierarchical → USE mindmap Mermaid
+IF process/flow → USE graph TD Mermaid""",
+    "schematic_compact": "ALWAYS use mindmap Mermaid for hierarchies.",
+    "nano": "NO VISUALS ALLOWED.",
+}
+
+# Base Configuration (Refactored to remove hardcoded examples)
 DEFAULT_BRIEF_CONFIG = {
     "action": "Generate a Structured Executive Report.",
-    # Note: Standard string. Uses {{...}} because the code uses .replace("{{SYNTESYS_LENGTH}}", ...)
     "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n**VISUAL**: Select the best format from the ALLOWED list below.",
     "visual_rules": "**ALLOWED**: Tables, `mindmap` (Concepts), `graph TD` (Flows), `pie` (Distribution).",
     "repeat_rule": DEFAULT_REPEAT_RULE,
-    # Note: f-string to inject examples immediately
-    "example": f"""## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+    # Placeholder for dynamic example injection
+    "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Concept Synthesis**: [Text...]
-**Analytical Insight**: [Text...]
-{TABLE_EXAMPLE}
----
-## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
-**Concept Synthesis**: [Text...]
-**Analytical Insight**: [Text...]
-{MINDMAP_EXAMPLE}
-""",
+**Analytical Insight**: [Text...]""",
 }
 
-# Configuration for each mode
+# Configuration for each mode (Refactored)
 PROMPT_CONFIG = {
     "nano": {
         "action": "Compress text into a Flash Brief.",
         "structure": "## 🎯 Nano Brief\n(Single dense paragraph of {LENGTH}).",
         "visual_rules": "**NO VISUALS**: Text ONLY.",
         "repeat_rule": "NANO BRIEF CONTENT:",
-        "example": "## 🎯 Nano Brief\n[Content...]",
+        "example_header": "## 🎯 Nano Brief\n[Content...]",
     },
     "table": {
         "action": "Reorganize text into a Structured Report.",
         "structure": "## [EMOJI] [TOPIC TITLE]\n**Insight**: (2-3 sentences).\n**Visual**: Raw Markdown Table ONLY.",
         "visual_rules": "ALLOWED: Tables ONLY.\nFORBIDDEN: Mermaid diagrams.",
-        "example": f"""## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
-**Insight**: [Analysis...]
-{TABLE_EXAMPLE}
-""",
+        "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+**Insight**: [Analysis...]""",
     },
     "schematic": {
         "action": "Reorganize text into a Visual Technical Report.",
         "structure": "## [EMOJI] [TOPIC TITLE]\n**Context**: (1 sentence).\n**Visual**: Mermaid Mindmap OR Graph TD.",
         "visual_rules": "ALLOWED: `mindmap`, `graph TD`.\nNO Subgraphs.",
-        "example": f"""## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
-**Context**: [Context...]
-{MINDMAP_EXAMPLE}
-""",
+        "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+**Context**: [Context...]""",
     },
     "brief": {},  # Uses DEFAULT_BRIEF_CONFIG
+    # simple_brief is now handled dynamically via logic, but kept for config fallback
     "simple_brief": {
         "action": "Generate a Structured Executive Report.",
         "visual_rules": "ALLOWED: Tables, `mindmap`, `pie`.\nFORBIDDEN: `graph`.",
-        "example": f"""## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+        "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Concept Synthesis**: [Text...]
-**Analytical Insight**: [Text...]
-{TABLE_EXAMPLE}
----
-## [YOUR EMOJI HERE] [TOPIC]
-**Concept Synthesis**: [Text...]
-**Analytical Insight**: [Text...]
-{MINDMAP_EXAMPLE}
-""",
+**Analytical Insight**: [Text...]""",
     },
 }
 
@@ -156,27 +166,20 @@ Mode: Silent.
 
 [STRUCTURE]
 {{SUMMARY_BLOCK}}
-
+---
 {{REPEAT_RULE}}
+---
 {{STRUCTURE_BLOCK}}
 
+[CLOSING]
 {MOD_TAKEAWAYS}
 
 [VISUALS]
 **Status**:
 {{VISUAL_RULES}}
-IF topic is hierarchical/branches → USE mindmap Mermaid
-IF comparative/numerical data → USE Markdown table
-IF percentage data (ex: 40% A, 30% B) → USE pie Mermaid
 
-
-Examples:
-Hierarchical: mindmap root(("Nervous System")) ("CNS") ("Brain")
-Comparative: | Lobe | Function |
-| Frontal | Planning |
-Percentage: pie title Shares "A" : 40 "B" : 30
-
-
+**Guidelines**:
+{{VISUAL_GUIDELINES}}
 
 **Syntax**:
 1. **Tables**: Markdown. No code blocks.
@@ -739,7 +742,6 @@ class Filter:
         self, mode: str, target_len: Optional[int], lang_instr: str, model_info: Any
     ) -> str:
         """Select and format the correct prompt template based on mode and model capability."""
-
         # Check for compact model OR forced override
         is_compact = self._is_compact_model(model_info) or FORCE_SIMPLE_BRIEF
 
@@ -756,16 +758,55 @@ class Filter:
                 self.debug.log(f"Using SIMPLE_BRIEF config for {mid}")
 
         # Merge Logic: Start with Default Brief, then apply Specific Config
-        # Only brief/simple_brief inherit from DEFAULT_BRIEF_CONFIG
         if cfg_key in ["brief", "simple_brief"]:
             config = DEFAULT_BRIEF_CONFIG.copy()
             config.update(PROMPT_CONFIG.get(cfg_key, {}))
         else:
             config = PROMPT_CONFIG.get(cfg_key, DEFAULT_BRIEF_CONFIG)
 
+        # --- DYNAMIC VISUAL LOGIC ---
+        # 1. Determine Visual Rules & Guidelines
+        visual_rules = config["visual_rules"]
+        visual_guidelines = ""
+
+        if mode == "nano":
+            visual_guidelines = VISUAL_GUIDELINES["nano"]
+        elif mode == "table":
+            visual_guidelines = VISUAL_GUIDELINES["table"]
+        elif mode == "schematic":
+            if is_compact:
+                visual_rules = (
+                    "ALLOWED: `mindmap`.\nFORBIDDEN: `graph TD` (Compact Mode)."
+                )
+                visual_guidelines = VISUAL_GUIDELINES["schematic_compact"]
+            else:
+                visual_guidelines = VISUAL_GUIDELINES["schematic"]
+        else:  # brief / simple_brief
+            if is_compact:
+                visual_rules = "ALLOWED: Tables, `mindmap`, `pie`.\nFORBIDDEN: `graph`."
+                visual_guidelines = VISUAL_GUIDELINES["compact"]
+            else:
+                visual_guidelines = VISUAL_GUIDELINES["standard"]
+
+        # 2. Construct Example Block Dynamically
+        example_block = config.get("example_header", "")
+
+        # Append examples based on allowed visuals
+        if mode != "nano":
+            if "Tables" in visual_rules or "Markdown table" in visual_guidelines:
+                example_block += f"\n{TABLE_EXAMPLE}"
+
+            if "`mindmap`" in visual_rules or "mindmap" in visual_guidelines:
+                example_block += f"\n---\n## [TOPIC]\n[Content...]\n{MINDMAP_EXAMPLE}"
+
+            # Only add Graph example if explicitly allowed and NOT compact
+            if "`graph TD`" in visual_rules and not is_compact:
+                example_block += f"\n---\n## [TOPIC]\n[Content...]\n{GRAPH_EXAMPLE}"
+
+        # --- END DYNAMIC LOGIC ---
+
         # Determine Summary Block & Lengths
         if mode == "nano":
-            # Nano: No separate summary block, length goes into structure
             summary_block = ""
             length_val = (
                 f"{target_len}"
@@ -773,24 +814,20 @@ class Filter:
                 else str(self.user_valves.max_nano_brief_length)
             )
         else:
-            # Standard: Use template + UserValve
             summary_block = SUMMARY_BLOCK_TEMPLATE.format(
                 LENGTH=self.user_valves.summary_length
             )
-            length_val = ""  # Not used in structure for standard modes
+            length_val = ""
 
         # Build Prompt
         prompt = MASTER_PROMPT.format(
             ACTION_TYPE=config["action"],
             SUMMARY_BLOCK=summary_block,
-            STRUCTURE_BLOCK=config["structure"].replace(
-                "{LENGTH}", length_val
-            ),  # Inject length for Nano
-            REPEAT_RULE=config.get(
-                "repeat_rule", DEFAULT_REPEAT_RULE
-            ),  # Use default if missing
-            VISUAL_RULES=config["visual_rules"],
-            EXAMPLE_BLOCK=config["example"],
+            STRUCTURE_BLOCK=config["structure"].replace("{LENGTH}", length_val),
+            REPEAT_RULE=config.get("repeat_rule", DEFAULT_REPEAT_RULE),
+            VISUAL_RULES=visual_rules,
+            VISUAL_GUIDELINES=visual_guidelines,  # Injected here
+            EXAMPLE_BLOCK=example_block,  # Injected here
             LANGUAGE_INSTRUCTION=lang_instr,
         )
 
@@ -802,10 +839,8 @@ class Filter:
             prompt = prompt.replace(
                 "{{ANALYSYS_LENGTH}}", self.user_valves.analysis_length
             )
-            # Note: summary_length is already handled above via SUMMARY_BLOCK_TEMPLATE
 
         self.debug.log(f"Prompt:\n" + prompt)
-
         return prompt
 
     def _construct_final_message(

@@ -1,3 +1,12 @@
+* 2024-05-22: v0.4.17 - KISS Refactor & Dynamic Visual Logic (Hannibal)
+  * The `key takeaways` have been tamed.
+  * Refactored `MASTER_PROMPT` and constants to a "Keep It Simple" architecture optimized for small models (<12B).
+  * Implemented dynamic injection of `VISUAL_GUIDELINES` based on model capabilities (Standard vs Compact).
+  * Added dynamic assembly of One-Shot examples in `_get_prompt_template` to strictly match allowed visuals.
+  * Fixed critical typo in language instructions (`akcnoledge` -> `acknowledge`) and simplified directive.
+  * Enforced strict Mermaid syntax rules (mandatory quotes `("Node")` and strict indentation) to prevent rendering errors.
+  * Removed contradictory visual rules (e.g., Graph allowed/forbidden conflicts) via logic separation.
+
 * 2025-02-19: v0.4.16 - Prompt Refactoring & Pie Chart Fixes (Hannibal)  
   * Refactored `PROMPT_CONFIG` to use inheritance from `DEFAULT_BRIEF_CONFIG`, reducing duplication.
   * Added explicit `Pie Charts` rule to `MASTER_PROMPT` to fix syntax errors (`mermaid pie` vs `pie`).
