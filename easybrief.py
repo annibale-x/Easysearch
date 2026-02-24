@@ -19,9 +19,6 @@ from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
 
-# TODO: Nel schematic brief il prompt tende a buttare sche mi e mindmap in fondo alle tabelle, con contenuti già rappresentati in tabella, biogna dire al modello di privilegiare i diagrammi e non ridondare le tabelle
-
-
 # --- CONSTANTS ---
 
 APP_ICON = "✨"
@@ -35,23 +32,26 @@ AUTO_NANO_BRIEF_COMPRESSION = 0.5
 # Standard Executive Summary Block
 # Note: Standard string (not f-string), uses {LENGTH} for .format()
 SUMMARY_BLOCK_TEMPLATE = """Start your output with:
-## 🎯 Executive Summary
-Write a comprehensive thesis. Target length: {LENGTH}.
+## 🎯 Executive Summary 
+(Use EXACTLY this header with the 🎯 emoji).
+Write a dense summary  here. Target length: {LENGTH}. 
+Aim for maximum information density within the target length.
 """
 
 MOD_TAKEAWAYS = f"""
 Closing rules:
 - NO other text after ---
 - EXACT 4 spaces before each > bullet line
-- Bold **LABEL** with **
+- Bold **Your label** with **
 - Max 8 bullets
 - FAIL = INVALID OUTPUT
 
-End your response with this exact text block. copy-paste format:
+End your response with only one text block. Copy-paste format:
 ---
 > __📌 Key Takeaways__
-> - [Your label]: [Description ...].
-> - [Your label]: [Description ...].
+> - **Your label**: Description.
+> - **Your label**: Description.
+...
 ---
 """
 
@@ -86,6 +86,16 @@ GRAPH_EXAMPLE = """
     graph TD
       A["Start Node"] --> B("End Node")
       B -- "Label" --> C{"Decision"}
+```
+"""
+
+PIE_EXAMPLE = """
+```mermaid
+pie
+    title Key Distribution
+    "Category A" : 40
+    "Category B" : 35
+    "Category C" : 25
 ```
 """
 
@@ -179,11 +189,15 @@ Mode: Silent.
 {{VISUAL_GUIDELINES}}
 
 **Syntax**:
-1. **Tables**: Markdown. No code blocks.
+0. No code blocks.
+1. **Tables**: Markdown. 
 2. **Mindmaps**: Mermaid `mindmap`.
    - Use `("Node Text")`.
    - One node per line. Strict indentation (2 spaces).
-3. **Others**: If allowed, use standard Mermaid syntax.
+3. **Pie Charts**: Mermaid `pie`.
+   - CRITICAL: NO percentage symbol `%`. Use ONLY raw numbers (e.g. ` "Label" : 40`).
+   - CRITICAL: NO parentheses `()` in title.   
+4. **Others**: If allowed, use standard Mermaid syntax.
 
 [TEMPLATE]
 {{EXAMPLE_BLOCK}}
@@ -808,6 +822,10 @@ class Filter:
             if "`mindmap`" in visual_rules or "mindmap" in visual_guidelines:
                 example_block += f"\n---\n## [TOPIC]\n[Content...]\n{MINDMAP_EXAMPLE}"
 
+            # FIX: Add Pie Example if allowed
+            if "`pie`" in visual_rules or "pie" in visual_guidelines:
+                example_block += f"\n---\n## [TOPIC]\n[Content...]\n{PIE_EXAMPLE}"
+
             # Only add Graph example if explicitly allowed and NOT compact
             if "`graph TD`" in visual_rules and not is_compact:
                 example_block += f"\n---\n## [TOPIC]\n[Content...]\n{GRAPH_EXAMPLE}"
@@ -854,23 +872,31 @@ class Filter:
 
     def _construct_final_message(
         self, prompt: str, content: str, is_search: bool, lang_code: Optional[str]
-    ) -> str:
-        """Assemble the final message string sent to the model."""
+    ) -> Tuple[str, str]:
+        """
+        Split the prompt into System Instructions and User Data.
+        Returns: (system_prompt, user_content)
+        """
         data_content = f"Search Query: {content}" if is_search else content
         fallback_instr = (
             "If ambiguous or mixed, default to ENGLISH." if not lang_code else ""
         )
 
-        # FIX: "Raw Data" approach.
-        # We present the input as a data block to be processed, not a conversation topic.
-        return (
+        # SYSTEM: The Rules
+        system_prompt = (
             f"{prompt}\n\n"
+            f"SYSTEM OVERRIDE: DO NOT CHAT. DO NOT EXPLAIN. OUTPUT ONLY THE REPORT."
+        )
+
+        # USER: The Data
+        user_content = (
             f"*** BEGIN SOURCE DATA ***\n"
             f"{data_content}\n"
             f"*** END SOURCE DATA ***\n\n"
-            f"{fallback_instr}\n\n"
-            f"SYSTEM OVERRIDE: DO NOT CHAT. DO NOT EXPLAIN. OUTPUT ONLY THE REPORT STARTING WITH '##'."
+            f"{fallback_instr}"
         )
+
+        return system_prompt, user_content
 
     async def inlet(
         self,
@@ -990,30 +1016,33 @@ class Filter:
                     self.ctx.model.original_model = current_model
                     body["model"] = target_model
 
-                # Brief Generation Logic (Modularized)
+                # Brief Generation Logic
                 mode, target_len, status_msg = self._resolve_brief_mode(content, parsed)
                 await self.em.emit_status(status_msg, False)
 
-                # FIX: Extract rich model metadata if available, fallback to ID string
                 model_input = body.get("metadata", {}).get("model") or body.get("model")
-
                 selected_prompt = self._get_prompt_template(
                     mode, target_len, lang_instruction, model_input
                 )
 
-                instr = self._construct_final_message(
+                # FIX: Split System and User messages for Llama 3 stability
+                sys_prompt, user_data = self._construct_final_message(
                     selected_prompt, content, parsed["is_search"], parsed["lang"]
                 )
 
-                # NEW: Apply Model Parameters (Bias-Free Config)
+                # Apply Model Parameters (Bias-Free Config)
                 body["temperature"] = self.user_valves.temperature
                 body["top_p"] = self.user_valves.top_p
                 body["top_k"] = 30
                 body["repeat_penalty"] = 1.0
                 body["frequency_penalty"] = 0.0
-                self.debug.log(
-                    f"Model Params Applied: Temp={body['temperature']}, TopP={body['top_p']}"
-                )
+
+                # NUCLEAR OPTION: Force strict [System, User] structure
+                body["messages"] = [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_data},
+                ]
+                self.debug.log("History wiped & Structure enforced: [System, User]")
 
             else:
                 # Search Only Logic (??)
@@ -1028,16 +1057,10 @@ class Filter:
                     f"Do not hallucinate or use prior conversation memory if unrelated.\n\n"
                     f"{simple_lang_instr}"
                 )
+                # Search mode keeps single user message for now (less critical)
+                body["messages"] = [{"role": "user", "content": instr}]
 
-            # Phase 7: Apply History & Features
-            body["messages"][-1]["content"] = instr
-            is_explicit_search = parsed["is_search"] and len(parsed["content"]) > 0
-
-            if parsed["is_brief"] or is_explicit_search:
-                current_instr = body["messages"][-1]["content"]
-                body["messages"] = [{"role": "user", "content": current_instr}]
-                self.debug.log("History wiped: Isolation Mode active.")
-
+            # Phase 7: Apply Features
             if self.ctx.model.override_web_search is not None:
                 if "features" not in body:
                     body["features"] = {}

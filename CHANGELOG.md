@@ -1,3 +1,10 @@
+* 2024-05-24: v0.4.19 - Llama 3 Stability & Pie Chart Fixes (Hannibal)
+  * Implemented strict `[System, User]` role separation in `inlet` to prevent Llama 3 from hallucinating instructions into content.
+  * Added explicit `PIE_EXAMPLE` constant and injection logic to fix Mermaid syntax errors (e.g., `title("...")`).
+  * Enforced `CRITICAL: NO percentage symbol %` rule in `MASTER_PROMPT` to stop Llama 3 from breaking Pie Charts.
+  * Refined `SUMMARY_BLOCK_TEMPLATE` with "dense summary" and "maximum information density" directives to stabilize output length variance.
+  * Locked the `## 🎯 Executive Summary` header with an explicit `(Use EXACTLY this header...)` constraint to prevent emoji drift.
+
 * 2024-05-24: v0.4.18 - Model Parameters & Visual Logic Fixes (Hannibal)
   * Added `temperature` (default 0.15) and `top_p` (default 0.8) to User Valves for fine-grained control over model creativity.
   * Hardcoded `repeat_penalty=1.0` and `frequency_penalty=0.0` to prevent syntax errors in Mermaid/Markdown generation.
