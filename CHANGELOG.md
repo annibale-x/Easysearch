@@ -1,4 +1,10 @@
-* 2024-05-22: v0.4.17 - KISS Refactor & Dynamic Visual Logic (Hannibal)
+* 2024-05-24: v0.4.18 - Model Parameters & Visual Logic Fixes (Hannibal)
+  * Added `temperature` (default 0.15) and `top_p` (default 0.8) to User Valves for fine-grained control over model creativity.
+  * Hardcoded `repeat_penalty=1.0` and `frequency_penalty=0.0` to prevent syntax errors in Mermaid/Markdown generation.
+  * Removed obsolete `FORCE_SIMPLE_BRIEF` logic; model capability detection is now fully dynamic.
+  * Refined `VISUAL_GUIDELINES` to strictly forbid Pie Charts unless explicit percentage data is present in the source text (anti-hallucination fix).
+
+* 2024-05-23: v0.4.17 - KISS Refactor & Dynamic Visual Logic (Hannibal)
   * The `key takeaways` have been tamed.
   * Refactored `MASTER_PROMPT` and constants to a "Keep It Simple" architecture optimized for small models (<12B).
   * Implemented dynamic injection of `VISUAL_GUIDELINES` based on model capabilities (Standard vs Compact).
@@ -7,7 +13,7 @@
   * Enforced strict Mermaid syntax rules (mandatory quotes `("Node")` and strict indentation) to prevent rendering errors.
   * Removed contradictory visual rules (e.g., Graph allowed/forbidden conflicts) via logic separation.
 
-* 2025-02-19: v0.4.16 - Prompt Refactoring & Pie Chart Fixes (Hannibal)  
+* 2025-02-23: v0.4.16 - Prompt Refactoring & Pie Chart Fixes (Hannibal)  
   * Refactored `PROMPT_CONFIG` to use inheritance from `DEFAULT_BRIEF_CONFIG`, reducing duplication.
   * Added explicit `Pie Charts` rule to `MASTER_PROMPT` to fix syntax errors (`mermaid pie` vs `pie`).
   * Removed `summary_len` from config, now relying solely on `UserValves.summary_length`.

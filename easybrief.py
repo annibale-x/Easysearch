@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.17
+version: 0.4.18
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -29,9 +29,6 @@ APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 SUPPRESS_OUTPUT = False
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
-
-FORCE_SIMPLE_BRIEF = True
-
 
 # --- CONSTANTS & TEMPLATES (KISS REFACTOR) ---
 
@@ -96,7 +93,7 @@ GRAPH_EXAMPLE = """
 VISUAL_GUIDELINES = {
     "standard": """IF topic is hierarchical/branches → USE mindmap Mermaid
 IF comparative/numerical data → USE Markdown table
-IF percentage data (ex: 40% A, 30% B) → USE pie Mermaid
+IF AND ONLY IF explicit percentage data exists in text → USE pie Mermaid. NEVER invent percentages.
 IF process/flow/timeline → USE graph TD Mermaid""",
     "compact": """IF topic is hierarchical/branches → USE mindmap Mermaid
 IF comparative/numerical data → USE Markdown table
@@ -422,6 +419,18 @@ class Filter:
             default="max 40 words",
             description="Target length for Analytical Context.",
         )
+        temperature: float = Field(
+            default=0.15,
+            ge=0.0,
+            le=1.0,
+            description="Creativity control (Lower = More precise syntax). Default: 0.15",
+        )
+        top_p: float = Field(
+            default=0.8,
+            ge=0.1,
+            le=1.0,
+            description="Vocabulary filter (Lower = More focused). Default: 0.8",
+        )
         debug: bool = Field(default=False)
 
         @validator("default_brief_mode")
@@ -742,8 +751,8 @@ class Filter:
         self, mode: str, target_len: Optional[int], lang_instr: str, model_info: Any
     ) -> str:
         """Select and format the correct prompt template based on mode and model capability."""
-        # Check for compact model OR forced override
-        is_compact = self._is_compact_model(model_info) or FORCE_SIMPLE_BRIEF
+        # Check for compact model (FORCE_SIMPLE_BRIEF removed)
+        is_compact = self._is_compact_model(model_info)
 
         # Determine config key
         cfg_key = mode
@@ -994,6 +1003,16 @@ class Filter:
 
                 instr = self._construct_final_message(
                     selected_prompt, content, parsed["is_search"], parsed["lang"]
+                )
+
+                # NEW: Apply Model Parameters (Bias-Free Config)
+                body["temperature"] = self.user_valves.temperature
+                body["top_p"] = self.user_valves.top_p
+                body["top_k"] = 30
+                body["repeat_penalty"] = 1.0
+                body["frequency_penalty"] = 0.0
+                self.debug.log(
+                    f"Model Params Applied: Temp={body['temperature']}, TopP={body['top_p']}"
                 )
 
             else:
