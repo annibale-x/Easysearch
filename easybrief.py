@@ -1,5 +1,5 @@
 """
-title: EasyBrief - Web Search & Executive Summaries
+title: 🎯 EasyBrief - Web Search & Executive Summaries
 version: 0.5.1
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
@@ -17,11 +17,14 @@ import datetime
 import asyncio
 from typing import Optional, Any, List, Dict, Tuple, Union
 from pydantic import BaseModel, Field, validator
+
+# Open WebUI Imports
 from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
 from open_webui.routers.retrieval import SearchForm, process_web_search  # type: ignore
 
+# Dependencies for Turbo Loader
 try:
     import httpx
 
@@ -43,12 +46,13 @@ APP_ICON = "✨"
 APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
-MAX_CHARS_PER_WEB_RESULT = 8000
+MAX_CHARS_PER_WEB_RESULT = 10000
 TRACE = False
 
-# --- CONSTANTS & TEMPLATES (MODULAR REFACTOR) ---
 
-# DEBUG OVERRIDE: Set True to bypass all logic and use the template below
+# --- PROMPT TEMPLATES ---
+
+# Debug Override Template
 DEBUG_PROMPT_OVERRIDE = False
 DEBUG_PROMPT_TEMPLATE = """
 [SYSTEM]
@@ -56,7 +60,7 @@ Role: Debugger.
 Task: Say HELLO WORLD 😁.
 """
 
-# Standard Executive Summary Block
+# Executive Summary Block Template
 SUMMARY_BLOCK_TEMPLATE = """Start your output with:
 ## 🎯 Executive Summary
 (Use EXACTLY this header with the 🎯 emoji).
@@ -64,6 +68,7 @@ Write a dense summary  here. Target length: {LENGTH}.
 Aim for maximum information density within the target length.
 """
 
+# Key Takeaways Block Template
 MOD_TAKEAWAYS = f"""
 End your response with only one text block. Use exactly this template (you MUST use the 📌 emoji):
 ### 📌 Key Takeaways
@@ -78,21 +83,17 @@ Closing rules:
 
 DEFAULT_REPEAT_RULE = "Analyze each Main Topic found in text:"
 
-# --- WEB SEARCH HANDLER (PORTABLE MODULE) ---
-
+# Query Generation Template for LLM
 QUERY_GENERATION_TEMPLATE = """### Task:
 Analyze the user request to determine the necessity of generating search queries.
 The aim is to retrieve comprehensive, updated, and valuable information.
-
 ### Guidelines:
 - Respond **EXCLUSIVELY** with a JSON object. Any form of extra commentary is strictly prohibited.
 - Format: {{ "queries": ["query1", "query2"] }}
 - Generate up to {COUNT} distinct, concise, and relevant queries.
 - Today's date is: {DATE}.
-
 ### User Request:
 {REQUEST}
-
 ### Output:
 Strictly return in JSON format:
 {{
@@ -100,7 +101,8 @@ Strictly return in JSON format:
 }}
 """
 
-# --- VISUAL ASSETS (MODULAR RULES) ---
+
+# --- VISUAL ASSETS CONFIGURATION ---
 
 VISUAL_ASSETS = {
     "table": {
@@ -166,7 +168,6 @@ graph TD
     """,
     },
     "pie": {
-        # Rafforziamo la regola di selezione iniziale
         "rule": "IF data represents parts of a whole (e.g. Market Share) → USE Mermaid pie. ELSE skip.",
         "syntax": """**Pie Charts**: Mermaid `pie`.
     RULES:
@@ -187,7 +188,9 @@ pie
     },
 }
 
-# Configuration for each mode (Refactored for Modular Visuals)
+
+# --- PROMPT CONFIGURATION MAP ---
+
 PROMPT_CONFIG = {
     "nano": {
         "action": "Compress text into a Flash Brief.",
@@ -219,11 +222,11 @@ PROMPT_CONFIG = {
 **Concept Synthesis**: [Text...]
 **Analytical Insight**: [Text...]""",
     },
-    # Fallback for compact models (Graph removed)
+    # Fallback for compact models (Graph removed for stability)
     "simple_brief": {
         "action": "Generate a Structured Executive Report.",
         "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n**Visual**: Select the best format from the ALLOWED list below.",
-        "visuals": ["table", "mindmap", "pie"],  # Graph removed for stability
+        "visuals": ["table", "mindmap", "pie"],
         "repeat_rule": DEFAULT_REPEAT_RULE,
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Concept Synthesis**: [Text...]
@@ -231,7 +234,7 @@ PROMPT_CONFIG = {
     },
 }
 
-# The Base Template (Modular Version)
+# The Master System Prompt
 MASTER_PROMPT = f"""
 [SYSTEM]
 Role: Analyst. Task: {{ACTION_TYPE}}
@@ -257,15 +260,19 @@ ALLOWED: {{ALLOWED_VISUALS_LIST}}
 """
 
 
+# --- CORE CLASSES ---
+
+
 class Store(dict):
-    """A dictionary subclass that allows attribute-style access."""
+    """
+    A dictionary subclass that allows attribute-style access.
+    Used for managing internal model state.
+    """
 
     def __getattr__(self, item):
         """Retrieve an item using attribute notation."""
-
         try:
             return self[item]
-
         except KeyError:
             return None
 
@@ -274,11 +281,13 @@ class Store(dict):
 
 
 class ConfigService:
-    """Service for handling configuration, valves, and internal state."""
+    """
+    Service for handling configuration, valves, and internal state.
+    Centralizes access to user preferences and system settings.
+    """
 
     def __init__(self, ctx):
         """Initialize the ConfigService with context and default model state."""
-
         self.ctx = ctx
         self.valves, self.user_valves = ctx.valves, ctx.user_valves
         self.start_time = time.time()
@@ -289,7 +298,6 @@ class ConfigService:
 
         self.model = Store(
             {
-                # FIX: Updated to use new prefix-based config
                 "search_prefix": f"{S}",
                 "brief_prefix": f"{B}",
                 "debug": ctx.valves.debug or ctx.user_valves.debug,
@@ -304,13 +312,11 @@ class ConfigService:
 
     def _get_global_config(self, key: str, default: Any = None) -> Any:
         """Retrieve global configuration from the application state."""
-
         cfg = self.ctx.request.app.state.config
         val = default
 
         if hasattr(cfg, key):
             val = getattr(cfg, key)
-
         elif hasattr(cfg, "_state") and isinstance(cfg._state, dict):
             val = cfg._state.get(key, default)
 
@@ -320,15 +326,18 @@ class ConfigService:
 class ShadowRequest:
     """
     A thread-safe proxy for the Request object.
-    It intercepts access to app.state.config.BYPASS_WEB_SEARCH_WEB_LOADER
+    It intercepts access to `app.state.config.BYPASS_WEB_SEARCH_WEB_LOADER`
     without modifying the global singleton state.
+
+    This prevents Race Conditions where modifying the global config for one user
+    would affect all other concurrent users on the server.
     """
 
     def __init__(self, original_request, override_bypass: bool):
         self._req = original_request
         self._override_bypass = override_bypass
 
-        # 3. Config Proxy
+        # 3. Config Proxy: Intercepts the specific config key
         class ConfigProxy:
             def __init__(self, real_config, bypass_val):
                 self._real = real_config
@@ -339,7 +348,7 @@ class ShadowRequest:
                     return self._bypass
                 return getattr(self._real, name)
 
-        # 2. State Proxy
+        # 2. State Proxy: Wraps the config
         class StateProxy:
             def __init__(self, real_state, config_proxy):
                 self._real = real_state
@@ -350,7 +359,7 @@ class ShadowRequest:
                     return self.config
                 return getattr(self._real, name)
 
-        # 1. App Proxy
+        # 1. App Proxy: Wraps the state
         class AppProxy:
             def __init__(self, real_app, state_proxy):
                 self._real = real_app
@@ -381,6 +390,7 @@ class WebSearchHandler:
     """
     A portable handler for Web Search operations in Open WebUI Filters.
     Encapsulates query generation, execution, citation emission, and result formatting.
+    Implements the 'Turbo Loader' architecture using ShadowRequest and HTTPX.
     """
 
     def __init__(
@@ -411,8 +421,10 @@ class WebSearchHandler:
             # 1. Generate Queries
             await self.em.emit_status("Generating Search Queries", False)
             queries = await self._generate_queries(query, model, max_queries)
+
             if not queries:
                 queries = [query]  # Fallback
+
             self.log(f"Generated Queries: {queries}")
             await self.em.emit_search_queries(queries)
 
@@ -431,6 +443,7 @@ class WebSearchHandler:
 
             if TRACE:
                 self.debug.log(f"Formatted results: {formatted_context}")
+
             return formatted_context
 
         except Exception as e:
@@ -470,12 +483,16 @@ class WebSearchHandler:
                         if line.strip()
                     ][:count]
             return [text]
+
         except Exception as e:
             self.log(f"Query Gen Error: {e}", True)
             return [text]
 
     async def _execute_search(self, queries: List[str]) -> Any:
-        """Calls Open WebUI search using a Shadow Request to safely bypass the loader."""
+        """
+        Calls Open WebUI search using a Shadow Request to safely bypass the loader.
+        This ensures we get only the URLs quickly, without waiting for OWUI's slow scraping.
+        """
         try:
             # Create a thread-safe proxy request that lies about the config
             # This prevents Race Conditions on the global app.state
@@ -485,12 +502,16 @@ class WebSearchHandler:
 
             # Pass the shadow request instead of the real one
             return await process_web_search(shadow_req, form_data, self.user_obj)
+
         except Exception as e:
             self.log(f"Process Web Search Error: {e}", True)
             raise e
 
     async def _fetch_concurrently(self, urls: List[str]) -> Dict[str, str]:
-        """Fetches multiple URLs in parallel using HTTPX, respecting Proxy and SSL settings."""
+        """
+        Fetches multiple URLs in parallel using HTTPX.
+        Respects Proxy settings and Custom CA Bundles for enterprise compatibility.
+        """
         if not HTTPX_AVAILABLE or not urls:
             return {}
 
@@ -538,7 +559,7 @@ class WebSearchHandler:
     def _clean_with_lxml(self, raw_html: str) -> str:
         """
         Uses lxml to strip HTML tags, scripts, styles, and structural noise.
-        Much more robust than Regex.
+        Much more robust than Regex as it understands the DOM structure.
         """
         if not raw_html or not LXML_AVAILABLE:
             return ""
@@ -555,11 +576,15 @@ class WebSearchHandler:
             # Extract text content
             text = tree.text_content()
             return text.strip()
+
         except Exception:
             return ""
 
     async def _process_results(self, results: Any) -> Optional[str]:
-        """Parses results, fetches raw HTML in parallel, and builds context."""
+        """
+        Parses results, fetches raw HTML in parallel, and builds context.
+        Implements a Hybrid Strategy: LXML (Primary) -> Snippet (Fallback).
+        """
         if not isinstance(results, dict) or "items" not in results:
             return None
 
@@ -668,16 +693,17 @@ class WebSearchHandler:
 
 
 class EmitterService:
-    """Service for emitting events and status updates to the UI."""
+    """
+    Service for emitting events and status updates to the UI.
+    Handles standard status messages, citations, and native search pills.
+    """
 
     def __init__(self, event_emitter, ctx):
         """Initialize the EmitterService."""
-
         self.emitter, self.ctx = event_emitter, ctx
 
     async def emit_status(self, description: str, done: bool = False):
         """Emit a status update to the frontend."""
-
         if self.emitter:
             await self.emitter(
                 {"type": "status", "data": {"description": description, "done": done}}
@@ -685,7 +711,6 @@ class EmitterService:
 
     async def emit_citation(self, name: str, document: str, source: str):
         """Emit a citation to the frontend."""
-
         if self.emitter:
             await self.emitter(
                 {
@@ -699,7 +724,10 @@ class EmitterService:
             )
 
     async def emit_search_queries(self, queries: List[str]):
-        """Emit search queries to trigger the native UI pills."""
+        """
+        Emit search queries to trigger the native UI pills.
+        Uses the specific action ID required by Open WebUI frontend.
+        """
         if self.emitter:
             await self.emitter(
                 {
@@ -715,20 +743,20 @@ class EmitterService:
 
 
 class DebugService:
-    """Service for logging and dumping debug information."""
+    """
+    Service for logging and dumping debug information.
+    Handles conditional logging based on user/system debug flags.
+    """
 
     def __init__(self, ctx):
         """Initialize the DebugService."""
-
         self.ctx = ctx
 
     def log(self, msg: str, is_error: bool = False):
         """Log a debug message to stderr."""
-
         is_debug = (
             self.ctx.ctx.model.debug if self.ctx.ctx else self.ctx.user_valves.debug
         )
-
         if is_debug or is_error:
             delta = time.time() - self.ctx.ctx.start_time if self.ctx.ctx else 0
             print(
@@ -739,15 +767,11 @@ class DebugService:
 
     async def error(self, e: Any):
         """Log an error and emit an error message to the UI."""
-
         self.log(str(e), is_error=True)
-
         if self.ctx:
             self.ctx.output_content += f"\n\n❌ {APP_NAME} ERROR: {str(e)}\n"
-
             if self.ctx.ctx:
                 self.ctx.ctx.model.executed = True
-
         if self.ctx.em.emitter:
             await self.ctx.em.emitter(
                 {"type": "message", "data": {"content": f"\n\n❌ ERROR: {str(e)}"}}
@@ -755,11 +779,9 @@ class DebugService:
 
     def dump(self, data: Any = None, label: str = "DUMP"):
         """Dump a JSON representation of data to stderr for debugging."""
-
         is_debug = (
             self.ctx.ctx.model.debug if self.ctx.ctx else self.ctx.user_valves.debug
         )
-
         if not is_debug:
             return
         print(
@@ -770,7 +792,6 @@ class DebugService:
 
     def emit(self):
         """Generate a Markdown-formatted debug dump for the UI."""
-
         # UI Debug is strictly User-controlled to prevent visual pollution
         if not self.ctx.user_valves.debug:
             return ""
@@ -799,7 +820,6 @@ class DebugService:
 
 
 class Filter:
-
     class Valves(BaseModel):
         search_prefix: str = Field(
             default="?",
@@ -878,7 +898,6 @@ class Filter:
 
     def __init__(self):
         """Initialize the Filter with default valves and state."""
-
         self.valves, self.user_valves = self.Valves(), self.UserValves()
         self.request = self.debug = self.net = self.em = self.ctx = None
         self.output_content = ""
@@ -888,7 +907,6 @@ class Filter:
         Parse input using Dynamic Trigger Map and Strict Whitespace Separation.
         Syntax: <Trigger>[Modifier] <Whitespace> <Content>
         """
-
         # 1. Smart I18N Normalization
         smart_map = {
             "»": ">>",
@@ -913,7 +931,6 @@ class Filter:
 
         # Core modes mapping ('b' replaces 'r')
         modes = {"n": "nano", "s": "schematic", "t": "table", "b": "brief"}
-
         trigger_map = {}
 
         # Generate permutations for modes (Lower & Upper)
@@ -939,22 +956,18 @@ class Filter:
 
         # 3. Robust Tokenization (Unix-Style)
         parts = txt.split(maxsplit=1)
-
         if not parts:
             return None
-
         command_token = parts[0]
 
         # Match against triggers (Check 3-char first, then 2-char)
         matched_cfg = None
         trigger_len = 0
-
         if len(command_token) >= 3:
             prefix_3 = command_token[:3]
             if prefix_3 in trigger_map:
                 matched_cfg = trigger_map[prefix_3]
                 trigger_len = 3
-
         if not matched_cfg and len(command_token) >= 2:
             prefix_2 = command_token[:2]
             if prefix_2 in trigger_map:
@@ -967,19 +980,16 @@ class Filter:
         # 4. Extract Modifier (Strict Syntax)
         raw_mod = command_token[trigger_len:]
         lang = None
-
         if raw_mod:
             # Strict Check: Modifiers MUST start with ':'
             if not raw_mod.startswith(":"):
                 return None
-
             clean_mod = raw_mod[1:]
             if clean_mod:
                 lang = clean_mod
 
         # 5. Extract Content
         content = parts[1].strip() if len(parts) > 1 else ""
-
         return {
             "is_search": matched_cfg["s"],
             "is_brief": matched_cfg["b"],
@@ -1012,7 +1022,6 @@ class Filter:
                 },
                 {"role": "user", "content": text[:2000]},
             ]
-
             form_data = {"model": model, "messages": messages, "stream": False}
 
             response = await generate_chat_completion(
@@ -1021,7 +1030,6 @@ class Filter:
 
             if isinstance(response, dict) and "choices" in response:
                 return response["choices"][0]["message"]["content"].strip().strip('"')
-
             return text[:100]
 
         except Exception as e:
@@ -1031,7 +1039,6 @@ class Filter:
 
     def _get_language_instruction(self, lang_code: Optional[str]) -> str:
         """Generate the language instruction string."""
-        # FIX: Typo fixed (acknowledge) and simplified for 8B models
         silence = "SILENT MODE: Do not explain. Start with header."
         if lang_code:
             target_lang = lang_code.upper()
@@ -1056,21 +1063,17 @@ class Filter:
         2. Content Length (Smart Threshold)
         3. Watermark detection (Recursive)
         """
-        # FIX: Obfuscated pattern to prevent UI rendering bugs with thinking tags
+        # Obfuscated pattern to prevent UI rendering bugs with thinking tags
         think_pattern = r"<" + "think>.*?</" + "think>"
-
         # Calculate word count (Cleaning thinking blocks)
         clean_content = re.sub(think_pattern, "", content, flags=re.DOTALL).strip()
-
         input_words = len(clean_content.split())
         smart_threshold = self.user_valves.smart_nano_threshold
 
         # Logic Variables
         explicit_mode = parsed["target_mode"]  # nano, schematic, table, brief, or None
-
         # Fix OWUI v0.8.x
         is_recursive = "## 🎯 Executive Summary" in content
-
         user_wants_nano = explicit_mode == "nano" or is_recursive
 
         # Auto-switch Logic: implicit mode (>>) AND text is short AND threshold enabled
@@ -1087,14 +1090,13 @@ class Filter:
             if force_smart_nano:
                 calc_len = int(input_words * AUTO_NANO_BRIEF_COMPRESSION)
                 target_len = max(50, calc_len)
-                status_msg = f"✨ Falling back to Nano Brief ({target_len}w).."
+                status_msg = f"Generating Nano Brief ({target_len}w)..."
                 self.debug.log(
                     f"Smart Nano Active: Input {input_words}w < Threshold {smart_threshold}w"
                 )
             else:
                 target_len = self.user_valves.max_nano_brief_length
-                status_msg = "✨ Generating a Nano Brief.."
-
+                status_msg = "Generating Nano Brief..."
             return "nano", target_len, status_msg
 
         # Fallback to standard/configured modes
@@ -1109,8 +1111,7 @@ class Filter:
             "brief": "Standard Brief",
         }
         label = labels.get(final_mode, "Standard Brief")
-
-        return final_mode, None, f"✨ Generating a {label}.."
+        return final_mode, None, f"Generating {label}..."
 
     def _is_compact_model(self, model_input: Any) -> bool:
         """
@@ -1158,7 +1159,6 @@ class Filter:
 
             # 3. Strategy B: Name Heuristics (Cloud/API Fallback)
             id_lower = model_id.lower()
-
             # Semantic keywords
             compact_keywords = ["mini", "flash", "haiku", "nano", "small"]
             if any(k in id_lower for k in compact_keywords):
@@ -1176,7 +1176,6 @@ class Filter:
                             f"Compact Model Detected (Regex): {model_id} ({size}B)"
                         )
                     return True
-
             return False
 
         except Exception as e:
@@ -1188,7 +1187,7 @@ class Filter:
         self, mode: str, target_len: Optional[int], lang_instr: str, model_info: Any
     ) -> str:
         """Select and format the correct prompt template based on mode and model capability."""
-        # ⚠️ DEBUG OVERRIDE: Bypass all logic if enabled
+        # DEBUG OVERRIDE: Bypass all logic if enabled
         if DEBUG_PROMPT_OVERRIDE:
             if self.debug:
                 self.debug.log("⚠️ DEBUG PROMPT OVERRIDE ACTIVE")
@@ -1214,14 +1213,13 @@ class Filter:
 
         # --- DYNAMIC VISUAL ASSEMBLY ---
         allowed_keys = config.get("visuals", [])
-
         # 1. Build Lists & Strings
         allowed_names = []
         guidelines_parts = []
         syntax_parts = []
+
         # Note: Example header is still separate as it's part of the main template structure, not the visual rules
         example_block = config.get("example_header", "")
-
         for key in allowed_keys:
             asset = VISUAL_ASSETS.get(key)
             if asset:
@@ -1235,7 +1233,6 @@ class Filter:
             "\n".join(guidelines_parts) if guidelines_parts else "NO VISUALS ALLOWED."
         )
         syntax_str = "\n".join(syntax_parts)
-
         # --- END DYNAMIC ASSEMBLY ---
 
         # Determine Summary Block & Lengths
@@ -1276,7 +1273,6 @@ class Filter:
 
         if TRACE:
             self.debug.log(f"Prompt generated for mode {cfg_key}: {prompt}")
-
         return prompt
 
     def _construct_final_message(
@@ -1286,7 +1282,7 @@ class Filter:
         Split the prompt into System Instructions and User Data.
         Returns: (system_prompt, user_content)
         """
-        # FIX: Clean Query for Web Search to prevent RAG confusion
+        # Clean Query for Web Search to prevent RAG confusion
         if is_search:
             # For Search: System gets the rules, User gets the CLEAN query.
             # We rely on OWUI RAG to inject the context.
@@ -1297,25 +1293,21 @@ class Filter:
                 f"Ignore the standard chat style; output ONLY the Report requested in the System Prompt."
             )
             user_content = content  # Keep it clean for the search engine
-
         else:
             # For Text Analysis: We wrap the content explicitly
             fallback_instr = (
                 "If ambiguous or mixed, default to ENGLISH." if not lang_code else ""
             )
-
             system_prompt = (
                 f"{prompt}\n\n"
                 f"SYSTEM OVERRIDE: DO NOT CHAT. DO NOT EXPLAIN. OUTPUT ONLY THE REPORT."
             )
-
             user_content = (
                 f"*** BEGIN SOURCE DATA ***\n"
                 f"{content}\n"
                 f"*** END SOURCE DATA ***\n\n"
                 f"{fallback_instr}"
             )
-
         return system_prompt, user_content
 
     async def inlet(
@@ -1326,7 +1318,6 @@ class Filter:
         __request__=None,
     ) -> dict:
         """Process the incoming request and trigger filter logic."""
-
         self.ctx = None
 
         # Phase 0: Early User Config Load (Required for Dynamic Triggers)
@@ -1340,10 +1331,8 @@ class Filter:
         if not msg_list:
             return body
 
-        # FIX: Robust Multimodal Text Extraction (v0.4.11)
-        # Iterates through all parts of the message to find text, avoiding list-attribute errors
+        # Handles multimodal text extraction (e.g. images + text) to prevent list attribute errors
         last_msg = msg_list[-1].get("content", "")
-
         if isinstance(last_msg, list):
             # Join all text parts found in the list (skips images)
             txt = "\n".join(
@@ -1356,12 +1345,10 @@ class Filter:
         else:
             # Handle standard string content
             txt = str(last_msg)
-
         txt = txt.strip()
 
         # Phase 1: Parsing & Validation
         parsed = self._parse_trigger(txt)
-
         if not parsed:
             return body
 
@@ -1376,7 +1363,7 @@ class Filter:
         if TRACE:
             self.debug.dump(body, "Body")
 
-        await self.em.emit_status("EasyBrief Started", False)
+        await self.em.emit_status("EasyBrief initialized", False)
 
         # Phase 3: State Management
         self.ctx.model.web_search_original = body.get("features", {}).get(
@@ -1384,7 +1371,6 @@ class Filter:
         )
         self.ctx.model.forced_language = parsed["lang"]
         self.ctx.model.is_brief = parsed["is_brief"]
-
         content = parsed["content"]
 
         # Phase 4: Context Resolution
@@ -1395,11 +1381,9 @@ class Filter:
                 if isinstance(prev_content, list)
                 else str(prev_content)
             )
-
             self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
-
             if parsed["is_search"]:
-                await self.em.emit_status("Extracting Search Query", False)
+                await self.em.emit_status("Extracting query...", False)
                 content = await self._extract_query(
                     content, body.get("model"), __user__["id"], parsed["lang"]
                 )
@@ -1430,7 +1414,6 @@ class Filter:
                 search_handler = WebSearchHandler(
                     self.request, __user__["id"], self.em, self.debug
                 )
-
                 # Execute Search Cycle (Generate -> Search -> Process)
                 search_context = await search_handler.search(
                     content, body.get("model"), self.user_valves.max_search_queries
@@ -1439,12 +1422,10 @@ class Filter:
                 if search_context:
                     # Update Content & Disable Features for Main Request
                     content = search_context
-
                     if "features" not in body:
                         body["features"] = {}
                     body["features"]["web_search"] = False
                     body["features"]["memory"] = False
-
                     # Treat as Local Brief now
                     parsed["is_search"] = False
 
@@ -1479,7 +1460,7 @@ class Filter:
                     mode, target_len, lang_instruction, model_input
                 )
 
-                # FIX: Split System and User messages for Llama 3 stability
+                # Split System and User messages for Llama 3 stability
                 sys_prompt, user_data = self._construct_final_message(
                     selected_prompt, content, parsed["is_search"], parsed["lang"]
                 )
@@ -1491,7 +1472,7 @@ class Filter:
                 body["repeat_penalty"] = 1.0
                 body["frequency_penalty"] = 0.0
 
-                # NUCLEAR OPTION: Force strict [System, User] structure
+                # Enforces strict [System, User] structure to prevent context leakage
                 body["messages"] = [
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_data},
@@ -1568,7 +1549,7 @@ class Filter:
             print(f"EasyBrief Outlet Error: {e}")
 
         finally:
-            # ⚠️ CRITICAL FIX: Prevent State Leaking
+            # Prevent State Leaking
             # Reset context to ensure subsequent requests (like Title Generation)
             # do not trigger this logic again using stale data.
             self.ctx = None
