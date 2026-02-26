@@ -1,3 +1,10 @@
+* 2026-02-26: v0.4.29 - Turbo Web Loader & Shadow Request (Hannibal)
+  * Implemented `ShadowRequest` proxy to safely bypass OWUI's default loader without race conditions.
+  * Added `_fetch_concurrently` using `httpx` for parallel, high-speed HTML retrieval.
+  * Integrated `lxml` for surgical DOM cleaning (removing navs, footers, scripts).
+  * Enhanced heuristic cleaning pipeline (regex) for fallback text.
+  * Added support for Proxy and Custom CA Bundles in `httpx` client.
+
 * 2026-02-25: v0.4.28 - Web Search Architecture Overhaul (Hannibal)
   * WebSearchHandler: Introduced a portable, self-contained class to manage query generation, execution, and result processing.
   * Query Expansion: Added logic to generate multiple search queries (up to 10) from a single user prompt for broader coverage.

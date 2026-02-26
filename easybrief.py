@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.28
+version: 0.4.29
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -8,17 +8,34 @@ author_url: https://openwebui.com/u/h4nn1b4l
 description: Transform text and web search results into structured Executive Reports with tables and mindmaps using simple triggers (??, >>, v>, t>).
 """
 
+import os
 import json
 import re
 import time
 import sys
 import datetime
+import asyncio
 from typing import Optional, Any, List, Dict, Tuple, Union
 from pydantic import BaseModel, Field, validator
 from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
 from open_webui.routers.retrieval import SearchForm, process_web_search  # type: ignore
+
+try:
+    import httpx
+
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
+
+try:
+    from lxml import html as lxml_html
+
+    LXML_AVAILABLE = True
+except ImportError:
+    LXML_AVAILABLE = False
+
 
 # --- CONSTANTS ---
 
@@ -27,7 +44,7 @@ APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
 MAX_CHARS_PER_WEB_RESULT = 8000
-TRACE = True
+TRACE = False
 
 # --- CONSTANTS & TEMPLATES (MODULAR REFACTOR) ---
 
@@ -240,6 +257,22 @@ ALLOWED: {{ALLOWED_VISUALS_LIST}}
 """
 
 
+class Store(dict):
+    """A dictionary subclass that allows attribute-style access."""
+
+    def __getattr__(self, item):
+        """Retrieve an item using attribute notation."""
+
+        try:
+            return self[item]
+
+        except KeyError:
+            return None
+
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+
 class ConfigService:
     """Service for handling configuration, valves, and internal state."""
 
@@ -284,20 +317,64 @@ class ConfigService:
         return val.value if hasattr(val, "value") else val
 
 
-class Store(dict):
-    """A dictionary subclass that allows attribute-style access."""
+class ShadowRequest:
+    """
+    A thread-safe proxy for the Request object.
+    It intercepts access to app.state.config.BYPASS_WEB_SEARCH_WEB_LOADER
+    without modifying the global singleton state.
+    """
 
-    def __getattr__(self, item):
-        """Retrieve an item using attribute notation."""
+    def __init__(self, original_request, override_bypass: bool):
+        self._req = original_request
+        self._override_bypass = override_bypass
 
-        try:
-            return self[item]
+        # 3. Config Proxy
+        class ConfigProxy:
+            def __init__(self, real_config, bypass_val):
+                self._real = real_config
+                self._bypass = bypass_val
 
-        except KeyError:
-            return None
+            def __getattr__(self, name):
+                if name == "BYPASS_WEB_SEARCH_WEB_LOADER":
+                    return self._bypass
+                return getattr(self._real, name)
 
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
+        # 2. State Proxy
+        class StateProxy:
+            def __init__(self, real_state, config_proxy):
+                self._real = real_state
+                self.config = config_proxy
+
+            def __getattr__(self, name):
+                if name == "config":
+                    return self.config
+                return getattr(self._real, name)
+
+        # 1. App Proxy
+        class AppProxy:
+            def __init__(self, real_app, state_proxy):
+                self._real = real_app
+                self.state = state_proxy
+
+            def __getattr__(self, name):
+                if name == "state":
+                    return self.state
+                return getattr(self._real, name)
+
+        # Build the nested proxy structure
+        real_app = original_request.app
+        real_state = real_app.state
+        real_config = real_state.config
+
+        self.app = AppProxy(
+            real_app, StateProxy(real_state, ConfigProxy(real_config, override_bypass))
+        )
+
+    def __getattr__(self, name):
+        # Delegate everything else to the real request
+        if name == "app":
+            return self.app
+        return getattr(self._req, name)
 
 
 class WebSearchHandler:
@@ -328,29 +405,26 @@ class WebSearchHandler:
             # 1. Generate Queries
             await self.em.emit_status("🧠 Generating Search Queries..", False)
             queries = await self._generate_queries(query, model, max_queries)
-
             if not queries:
                 queries = [query]  # Fallback
-
             self.log(f"Generated Queries: {queries}")
             await self.em.emit_status(f"⛏️ Searching: {len(queries)} topics..", False)
 
-            # 2. Execute Search
+            # 2. Execute Search (Bypassing OWUI Loader safely)
             results = await self._execute_search(queries)
 
-            if self.debug:  # Usa self.debug se disponibile
-                self.debug.dump(results, "RAW SEARCH RESULTS")  # <--- QUI
+            if self.debug and TRACE:
+                self.debug.dump(results, "RAW SEARCH RESULTS")
 
             if not results:
                 await self.em.emit_status("⚠️ No results found", True)
                 return None
 
-            # 3. Process Results & Emit Citations
+            # 3. Process Results (Parallel Fetch + LXML + Heuristics)
             formatted_context = await self._process_results(results)
 
             if TRACE:
                 self.debug.log(f"Formatted results: {formatted_context}")
-
             return formatted_context
 
         except Exception as e:
@@ -364,7 +438,6 @@ class WebSearchHandler:
             prompt = QUERY_GENERATION_TEMPLATE.format(
                 COUNT=count, DATE=datetime.date.today(), REQUEST=text
             )
-
             messages = [{"role": "user", "content": prompt}]
             form_data = {"model": model, "messages": messages, "stream": False}
 
@@ -390,74 +463,193 @@ class WebSearchHandler:
                         for line in content.split("\n")
                         if line.strip()
                     ][:count]
-
             return [text]
-
         except Exception as e:
             self.log(f"Query Gen Error: {e}", True)
             return [text]
 
     async def _execute_search(self, queries: List[str]) -> Any:
-        """Calls Open WebUI internal search endpoint."""
+        """Calls Open WebUI search using a Shadow Request to safely bypass the loader."""
         try:
+            # Create a thread-safe proxy request that lies about the config
+            # This prevents Race Conditions on the global app.state
+            shadow_req = ShadowRequest(self.request, override_bypass=True)
+
             form_data = SearchForm(queries=queries, collection_name="")
-            return await process_web_search(self.request, form_data, self.user_obj)
+
+            # Pass the shadow request instead of the real one
+            return await process_web_search(shadow_req, form_data, self.user_obj)
         except Exception as e:
             self.log(f"Process Web Search Error: {e}", True)
             raise e
 
+    async def _fetch_concurrently(self, urls: List[str]) -> Dict[str, str]:
+        """Fetches multiple URLs in parallel using HTTPX, respecting Proxy and SSL settings."""
+        if not HTTPX_AVAILABLE or not urls:
+            return {}
+
+        results = {}
+        # Detect Custom CA Bundle (for corporate/self-signed certs)
+        verify_ssl = os.environ.get("REQUESTS_CA_BUNDLE", True)
+        if verify_ssl == "":
+            verify_ssl = True
+
+        timeout = httpx.Timeout(8.0, connect=5.0)
+        limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+
+        try:
+            # trust_env=True reads HTTP_PROXY/HTTPS_PROXY automatically
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                limits=limits,
+                headers=headers,
+                follow_redirects=True,
+                verify=verify_ssl,
+                trust_env=True,
+            ) as client:
+
+                tasks = []
+                for url in urls:
+                    tasks.append(client.get(url))
+
+                # Execute parallel fetch
+                responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for url, resp in zip(urls, responses):
+                    if isinstance(resp, httpx.Response) and resp.status_code == 200:
+                        results[url] = resp.text
+                    elif self.debug and isinstance(resp, Exception):
+                        self.debug.log(f"Fetch failed for {url}: {resp}")
+
+        except Exception as e:
+            self.log(f"HTTPX Batch Error: {e}", True)
+
+        return results
+
+    def _clean_with_lxml(self, raw_html: str) -> str:
+        """
+        Uses lxml to strip HTML tags, scripts, styles, and structural noise.
+        Much more robust than Regex.
+        """
+        if not raw_html or not LXML_AVAILABLE:
+            return ""
+
+        try:
+            # Parse HTML
+            tree = lxml_html.fromstring(raw_html)
+
+            # Remove noise elements (scripts, styles, nav, footer, etc.)
+            cleaner_xpath = "//script | //style | //nav | //footer | //header | //aside | //form | //iframe | //noscript | //div[contains(@class, 'menu')] | //div[contains(@class, 'footer')]"
+            for element in tree.xpath(cleaner_xpath):
+                element.drop_tree()
+
+            # Extract text content
+            text = tree.text_content()
+            return text.strip()
+        except Exception:
+            return ""
+
     async def _process_results(self, results: Any) -> Optional[str]:
-        """Parses results, emits citations, and builds context string."""
+        """Parses results, fetches raw HTML in parallel, and builds context."""
         if not isinstance(results, dict) or "items" not in results:
             return None
 
         items = results["items"]
-        docs = results.get("docs", [])
+        # Note: 'docs' will be empty/useless because we bypassed the loader!
 
         if not items:
             return None
 
         await self.em.emit_status(f"📚 Found {len(items)} sources", False)
 
-        # 1. Emit Citations (UI Badge)
+        # 1. Emit Citations & Collect URLs
+        urls_to_fetch = []
         for item in items:
             url = item.get("link", "")
-            title = item.get("title", "Source")
-            snippet = item.get("snippet", "")
-            await self.em.emit_citation(title, snippet, url)
+            if url:
+                urls_to_fetch.append(url)
+            await self.em.emit_citation(
+                item.get("title", "Source"), item.get("snippet", ""), url
+            )
 
-        # 2. Build Context String
+        # 2. Parallel Fetch (The Turbo Boost)
+        fetched_html_map = {}
+        if HTTPX_AVAILABLE and LXML_AVAILABLE and urls_to_fetch:
+            await self.em.emit_status(
+                f"⚡ Deep reading {len(urls_to_fetch)} pages..", False
+            )
+            fetched_html_map = await self._fetch_concurrently(urls_to_fetch)
+
+        # 3. Build Context
         context_parts = []
-        sources_to_use = docs if docs else items
 
-        for i, source in enumerate(sources_to_use):
-            # 1. Extraction
-            if "content" in source:  # Full Doc
-                text = source["content"]
-                meta = source.get("metadata", {})
-                src_title = meta.get("title", "Source")
-                src_url = meta.get("source", "")
-            else:  # Snippet Item
-                text = source.get("snippet", "")
-                src_title = source.get("title", "Source")
-                src_url = source.get("link", "")
+        # Expanded Noise Pattern (Compiled once for performance)
+        noise_pattern = re.compile(
+            r"^(?:menu|home|search|sign in|log in|sign up|register|subscribe|newsletter|account|profile|cart|checkout|buy now|shop|close|cancel|skip to content|next|previous|back to top|privacy policy|terms|cookie|copyright|all rights reserved|legal|contact us|help|support|faq|social|follow us|share|facebook|twitter|instagram|linkedin|youtube|advertisement|sponsored|promoted|related posts|read more|loading|posted by|written by|author|category|tags)$",
+            re.IGNORECASE,
+        )
 
-            # 2. CLEANING PIPELINE (Applied to ALL text)
-            # 1. Normalize line endings
+        for i, item in enumerate(items):
+            url = item.get("link", "")
+            title = item.get("title", "Source")
+            text = ""
+
+            # STRATEGY A: High-Quality LXML (From our parallel fetch)
+            if url in fetched_html_map:
+                text = self._clean_with_lxml(fetched_html_map[url])
+
+            # STRATEGY B: Fallback to Snippet (Since we bypassed OWUI loader, we only have snippets as backup)
+            if not text:
+                text = item.get("snippet", "")
+
+            # 4. CLEANING PIPELINE (Universal Polish)
+            # Applied to ALL text sources (LXML or Fallback) for maximum purity.
+
+            # A. Basic Normalization
             text = text.replace("\r\n", "\n").replace("\r", "\n")
+            text = re.sub(r"[ \t\u00A0]+", " ", text)  # Collapse horizontal whitespace
 
-            # 2. Collapse horizontal whitespace (tabs, non-breaking spaces)
-            text = re.sub(r"[ \t\u00A0]+", " ", text)
+            # B. Line-by-Line Filtering
+            lines = text.split("\n")
+            cleaned_lines = []
+            prev_line = ""
 
-            # 3. Remove leading/trailing whitespace per line
-            text = re.sub(r"^\s+|\s+$", "", text, flags=re.MULTILINE)
+            for line in lines:
+                line = line.strip()
 
-            # 4. Filter out noise lines (Menu items, buttons, short navigational text)
-            # Removes lines that are likely menu items (short, specific keywords)
-            noise_pattern = r"^(?:Menu|Home|Search|Sign in|Log in|Learn more|Buy now|Check prices|Close|Previous|Next|Skip to content|Cookie Policy|Privacy Policy|Terms of Use)$"
-            text = re.sub(noise_pattern, "", text, flags=re.MULTILINE | re.IGNORECASE)
+                # Filter 1: Empty lines
+                if not line:
+                    continue
 
-            # 5. Collapse multiple newlines (3+ becomes 2)
+                # Filter 2: Exact Noise Match (Case Insensitive)
+                if noise_pattern.match(line):
+                    continue
+
+                # Filter 3: Short structural junk (e.g., "|", ">>", "---", "•")
+                # Removes lines < 5 chars that contain NO alphanumeric characters
+                if len(line) < 5 and not any(c.isalnum() for c in line):
+                    continue
+
+                # Filter 4: Date/Time clutter (heuristic)
+                # Removes lines that are just dates like "Oct 12, 2023" or "12/10/2023"
+                if len(line) < 20 and re.match(
+                    r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\w{3} \d{1,2},? \d{4}", line
+                ):
+                    continue
+
+                # Filter 5: Consecutive Deduplication
+                if line == prev_line:
+                    continue
+
+                cleaned_lines.append(line)
+                prev_line = line
+
+            text = "\n".join(cleaned_lines)
+
+            # C. Collapse multiple newlines (3+ becomes 2)
             text = re.sub(r"\n{3,}", "\n\n", text)
 
             # 3. Truncate
@@ -465,7 +657,7 @@ class WebSearchHandler:
                 text = text[:MAX_CHARS_PER_WEB_RESULT] + "... [TRUNCATED]"
 
             context_parts.append(
-                f"--- Source {i+1}: {src_title} ---\nURL: {src_url}\nContent:\n{text}\n"
+                f"--- Source {i+1}: {title} ---\nURL: {url}\nContent:\n{text}\n"
             )
 
         return "\n".join(context_parts)
