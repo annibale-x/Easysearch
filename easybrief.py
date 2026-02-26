@@ -584,9 +584,7 @@ class WebSearchHandler:
         # 2. Parallel Fetch (The Turbo Boost)
         fetched_html_map = {}
         if HTTPX_AVAILABLE and LXML_AVAILABLE and urls_to_fetch:
-            await self.em.emit_status(
-                f"Deep reading {len(urls_to_fetch)} pages", False
-            )
+            await self.em.emit_status(f"Deep reading {len(urls_to_fetch)} pages", False)
             fetched_html_map = await self._fetch_concurrently(urls_to_fetch)
 
         # 3. Build Context
@@ -1406,7 +1404,7 @@ class Filter:
                     content, body.get("model"), __user__["id"], parsed["lang"]
                 )
                 self.debug.log(f"Extracted Query: {content}")
-                await self.em.emit_status(f"Searching: {content[:60]}.", False)
+                await self.em.emit_status(f"Searching: {content[:60]}...", False)
 
         # Phase 5: Threshold Check (Anti-Spam)
         min_threshold = self.valves.min_input_threshold
