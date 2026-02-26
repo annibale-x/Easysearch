@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.18
+version: 0.4.28
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -12,84 +12,152 @@ import json
 import re
 import time
 import sys
-import httpx  # type: ignore
+import datetime
 from typing import Optional, Any, List, Dict, Tuple, Union
 from pydantic import BaseModel, Field, validator
 from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users, UserModel  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
+from open_webui.routers.retrieval import SearchForm, process_web_search  # type: ignore
 
 # --- CONSTANTS ---
 
 APP_ICON = "✨"
 APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
-SUPPRESS_OUTPUT = False
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
+MAX_CHARS_PER_WEB_RESULT = 8000
+TRACE = True
 
-# --- CONSTANTS & TEMPLATES (KISS REFACTOR) ---
+# --- CONSTANTS & TEMPLATES (MODULAR REFACTOR) ---
+
+# DEBUG OVERRIDE: Set True to bypass all logic and use the template below
+DEBUG_PROMPT_OVERRIDE = False
+DEBUG_PROMPT_TEMPLATE = """
+[SYSTEM]
+Role: Debugger.
+Task: Say HELLO WORLD 😁.
+"""
 
 # Standard Executive Summary Block
-# Note: Standard string (not f-string), uses {LENGTH} for .format()
 SUMMARY_BLOCK_TEMPLATE = """Start your output with:
-## 🎯 Executive Summary 
+## 🎯 Executive Summary
 (Use EXACTLY this header with the 🎯 emoji).
-Write a dense summary  here. Target length: {LENGTH}. 
+Write a dense summary  here. Target length: {LENGTH}.
 Aim for maximum information density within the target length.
 """
 
 MOD_TAKEAWAYS = f"""
+End your response with only one text block. Use exactly this template (you MUST use the 📌 emoji):
+### 📌 Key Takeaways
+> - Your label: Description.
+> - Your label: Description.
+---
 Closing rules:
 - NO other text after ---
-- EXACT 4 spaces before each > bullet line
 - Bold **Your label** with **
-- Max 8 bullets
-- FAIL = INVALID OUTPUT
-
-End your response with only one text block. Copy-paste format:
----
-> __📌 Key Takeaways__
-> - **Your label**: Description.
-> - **Your label**: Description.
-...
----
+- Up to 8 bullets
 """
 
-# Default Loop Rule (Dichiarativo, non imperativo)
 DEFAULT_REPEAT_RULE = "Analyze each Main Topic found in text:"
 
-MINDMAP_EXAMPLE = """
-```mermaid
-    mindmap
-      root(("Main Subject"))
-        ("Branch A")
-          ("Detail 1")
-          ("Detail 2")
-            ("Sub Branch C")
-              ("Detail 3")
-        ("Branch B")
-          ("Detail (with parens)")
-    ...
-```
+# --- WEB SEARCH HANDLER (PORTABLE MODULE) ---
+
+QUERY_GENERATION_TEMPLATE = """### Task:
+Analyze the user request to determine the necessity of generating search queries.
+The aim is to retrieve comprehensive, updated, and valuable information.
+
+### Guidelines:
+- Respond **EXCLUSIVELY** with a JSON object. Any form of extra commentary is strictly prohibited.
+- Format: {{ "queries": ["query1", "query2"] }}
+- Generate up to {COUNT} distinct, concise, and relevant queries.
+- Today's date is: {DATE}.
+
+### User Request:
+{REQUEST}
+
+### Output:
+Strictly return in JSON format:
+{{
+  "queries": ["query1", "query2"]
+}}
 """
 
-TABLE_EXAMPLE = """
+# --- VISUAL ASSETS (MODULAR RULES) ---
+
+VISUAL_ASSETS = {
+    "table": {
+        "rule": "IF comparative data (rows/cols) exists → USE Markdown Table. ELSE skip.",
+        "syntax": """**Tables**:
+    RULES:
+    1. Only MARKDOWN tables.
+    2. Align columns strictly.
+    3. Follow EXACTLY the syntax of the following example:
 | YOUR HEADING | YOUR HEADING |
 |--------------|--------------|
 | YOUR DATA    | YOUR DATA    |
-...
-"""
-
-# NEW: Graph Example for Schematic/Brief modes (Non-Compact only)
-GRAPH_EXAMPLE = """
+    """,
+    },
+    "mindmap": {
+        "rule": "IF hierarchical structure (root->branch->leaf) exists → USE Mermaid mindmap. ELSE skip.",
+        "syntax": """**Mindmaps**: Mermaid `mindmap`.
+    RULES:
+    1. Only one root node can exist, e.g., `root((Root node description))`.
+    2. Every node except the root MUST be indented with exactly two spaces of indentation. Each subsequent hierarchical level must add exactly two additional spaces (4, 6, 8, etc.).
+    3. Use a descriptive label for each line.
+    4. Use parentheses ONLY to define node shapes.
+    5. NO brackets of any kind (), [], {} are allowed INSIDE the text of the label itself; replace them with double quotes (") if needed.
+    6. If a label violates ANY rule, fix it immediately before printing.
+    7. Always specify the code-block type: ```mermaid.
+    8. Follow EXACTLY the syntax of the following example:
 ```mermaid
-    graph TD
-      A["Start Node"] --> B("End Node")
-      B -- "Label" --> C{"Decision"}
+mindmap
+  root((Model))
+    Problems
+      Fragile syntax
+      "No brackets in labels"
+    Solutions
+      Very specific prompt
+      Rigid system prompt
 ```
-"""
-
-PIE_EXAMPLE = """
+    9. MENTALLY verify that the mindmap you are about to print strictly adheres to the previous 8 rules. If they are not all satisfied, mentally re-run the mindmap generation for (max 10 times) until all rules are met.
+    """,
+    },
+    "graph": {
+        "rule": "IF sequential process/flow/decision exists → USE Mermaid graph TD. ELSE skip.",
+        "syntax": """**Flowcharts**: Mermaid `graph TD`.
+    RULES:
+    1. Nodes Syntax: `ID("Text")`, `ID["Text"]`, `ID{"Text"}`.
+    2 Connectors Label EXACT Syntax: `|"Label"|` (use pipes before and after the label text)
+    3 Connectors Syntax: `ID1 -->|"Label"| ID2` (No spaces between pipes and arrows).
+    4. Logic: No dead ends. All negative paths must loop back to a previous check or start.
+    5. No trailing characters after brackets: `ID["Text"]` is correct, `ID["Text"])` is a failure.
+    6. Always specify the code-block type: ```mermaid.
+    7. Follow EXACTLY the syntax and logic structure of the provided one-shot:
+```mermaid
+graph TD
+    A("Process Start") -->|"Initialize"| B{"Validation"}
+    B -->|"Invalid?"| C["Wait / Retry"]
+    C -->|"Re-check"| B
+    B -->|"Valid?"| D["Core Execution!"]
+    D --> E{"Integrity Check"}
+    E -->|"Critical Error"| F["System Reset"]
+    F --> A
+    E -->|"Success"| G("End: Goal Reached")
+```
+    8. MENTALLY verify that the graph TD you are about to print strictly adheres to the previous 7 rules. If they are not all satisfied, mentally re-run the mindmap generation for maximum 10 times until all rules are met.
+    """,
+    },
+    "pie": {
+        # Rafforziamo la regola di selezione iniziale
+        "rule": "IF data represents parts of a whole (e.g. Market Share) → USE Mermaid pie. ELSE skip.",
+        "syntax": """**Pie Charts**: Mermaid `pie`.
+    RULES:
+    1. MANDATORY CHECK: Does the data represent a "Market Share" or "Distribution"? If NOT, output nothing for this visual section.
+    2. CRITICAL: NO percentage symbol `%`. Use ONLY raw numbers (e.g. `"Label" : 40`).
+    3. CRITICAL: NO parentheses `()` in title.
+    4. Always specify the code-block type: ```mermaid.
+    5. Follow EXACTLY the syntax of the provided one-shot:
 ```mermaid
 pie
     title Key Distribution
@@ -97,108 +165,76 @@ pie
     "Category B" : 35
     "Category C" : 25
 ```
-"""
-
-# NEW: Visual Guidelines Blocks (Logic for selecting the right visual)
-VISUAL_GUIDELINES = {
-    "standard": """IF topic is hierarchical/branches → USE mindmap Mermaid
-IF comparative/numerical data → USE Markdown table
-IF AND ONLY IF explicit percentage data exists in text → USE pie Mermaid. NEVER invent percentages.
-IF process/flow/timeline → USE graph TD Mermaid""",
-    "compact": """IF topic is hierarchical/branches → USE mindmap Mermaid
-IF comparative/numerical data → USE Markdown table
-IF percentage data (ex: 40% A, 30% B) → USE pie Mermaid
-NOTE: Do NOT use graph/flowcharts.""",
-    "table": "ALWAYS use Markdown tables for data representation.",
-    "schematic": """IF topic is hierarchical → USE mindmap Mermaid
-IF process/flow → USE graph TD Mermaid""",
-    "schematic_compact": "ALWAYS use mindmap Mermaid for hierarchies.",
-    "nano": "NO VISUALS ALLOWED.",
+    6. MENTALLY VERIFY: If the data does not strictly fit these rules, DO NOT generate the chart.
+    """,
+    },
 }
 
-# Base Configuration (Refactored to remove hardcoded examples)
-DEFAULT_BRIEF_CONFIG = {
-    "action": "Generate a Structured Executive Report.",
-    "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n**VISUAL**: Select the best format from the ALLOWED list below.",
-    "visual_rules": "**ALLOWED**: Tables, `mindmap` (Concepts), `graph TD` (Flows), `pie` (Distribution).",
-    "repeat_rule": DEFAULT_REPEAT_RULE,
-    # Placeholder for dynamic example injection
-    "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
-**Concept Synthesis**: [Text...]
-**Analytical Insight**: [Text...]""",
-}
-
-# Configuration for each mode (Refactored)
+# Configuration for each mode (Refactored for Modular Visuals)
 PROMPT_CONFIG = {
     "nano": {
         "action": "Compress text into a Flash Brief.",
         "structure": "## 🎯 Nano Brief\n(Single dense paragraph of {LENGTH}).",
-        "visual_rules": "**NO VISUALS**: Text ONLY.",
+        "visuals": [],  # No visuals
         "repeat_rule": "NANO BRIEF CONTENT:",
         "example_header": "## 🎯 Nano Brief\n[Content...]",
     },
     "table": {
         "action": "Reorganize text into a Structured Report.",
         "structure": "## [EMOJI] [TOPIC TITLE]\n**Insight**: (2-3 sentences).\n**Visual**: Raw Markdown Table ONLY.",
-        "visual_rules": "ALLOWED: Tables ONLY.\nFORBIDDEN: Mermaid diagrams.",
+        "visuals": ["table"],
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Insight**: [Analysis...]""",
     },
     "schematic": {
         "action": "Reorganize text into a Visual Technical Report.",
         "structure": "## [EMOJI] [TOPIC TITLE]\n**Context**: (1 sentence).\n**Visual**: Mermaid Mindmap OR Graph TD.",
-        "visual_rules": "ALLOWED: `mindmap`, `graph TD`.\nNO Subgraphs.",
+        "visuals": ["mindmap", "graph"],
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Context**: [Context...]""",
     },
-    "brief": {},  # Uses DEFAULT_BRIEF_CONFIG
-    # simple_brief is now handled dynamically via logic, but kept for config fallback
+    "brief": {
+        "action": "Generate a Structured Executive Report.",
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n**Visual**: Select the best format from the ALLOWED list below.",
+        "visuals": ["table", "mindmap", "pie", "graph"],
+        "repeat_rule": DEFAULT_REPEAT_RULE,
+        "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
+**Concept Synthesis**: [Text...]
+**Analytical Insight**: [Text...]""",
+    },
+    # Fallback for compact models (Graph removed)
     "simple_brief": {
         "action": "Generate a Structured Executive Report.",
-        "visual_rules": "ALLOWED: Tables, `mindmap`, `pie`.\nFORBIDDEN: `graph`.",
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n**Visual**: Select the best format from the ALLOWED list below.",
+        "visuals": ["table", "mindmap", "pie"],  # Graph removed for stability
+        "repeat_rule": DEFAULT_REPEAT_RULE,
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Concept Synthesis**: [Text...]
 **Analytical Insight**: [Text...]""",
     },
 }
 
-# The Base Template (KISS Version - Ultra Clean)
+# The Base Template (Modular Version)
 MASTER_PROMPT = f"""
 [SYSTEM]
 Role: Analyst. Task: {{ACTION_TYPE}}
 Mode: Silent.
-
 [LANGUAGE]
 {{LANGUAGE_INSTRUCTION}}
-
 [STRUCTURE]
 {{SUMMARY_BLOCK}}
 ---
 {{REPEAT_RULE}}
 ---
 {{STRUCTURE_BLOCK}}
-
 [CLOSING]
 {MOD_TAKEAWAYS}
-
 [VISUALS]
 **Status**:
-{{VISUAL_RULES}}
-
+ALLOWED: {{ALLOWED_VISUALS_LIST}}
 **Guidelines**:
 {{VISUAL_GUIDELINES}}
-
-**Syntax**:
-0. No code blocks.
-1. **Tables**: Markdown. 
-2. **Mindmaps**: Mermaid `mindmap`.
-   - Use `("Node Text")`.
-   - One node per line. Strict indentation (2 spaces).
-3. **Pie Charts**: Mermaid `pie`.
-   - CRITICAL: NO percentage symbol `%`. Use ONLY raw numbers (e.g. ` "Label" : 40`).
-   - CRITICAL: NO parentheses `()` in title.   
-4. **Others**: If allowed, use standard Mermaid syntax.
-
+{{VISUAL_SYNTAX}}
 [TEMPLATE]
 {{EXAMPLE_BLOCK}}
 """
@@ -230,7 +266,6 @@ class ConfigService:
                 "executed": False,
                 "web_search_original": False,
                 "override_web_search": OVERRIDE_WEB_SEARCH,
-                "suppress_output": SUPPRESS_OUTPUT,
             }
         )
 
@@ -263,6 +298,177 @@ class Store(dict):
 
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
+
+
+class WebSearchHandler:
+    """
+    A portable handler for Web Search operations in Open WebUI Filters.
+    Encapsulates query generation, execution, citation emission, and result formatting.
+    """
+
+    def __init__(self, request, user_id: str, emitter: Any, debug_service: Any = None):
+        self.request = request
+        self.user_id = user_id
+        self.em = emitter
+        self.debug = debug_service
+        self.user_obj = Users.get_user_by_id(user_id)
+
+    def log(self, msg: str, is_error: bool = False):
+        if self.debug:
+            self.debug.log(f"[WebSearchHandler] {msg}", is_error)
+
+    async def search(
+        self, query: str, model: str, max_queries: int = 3
+    ) -> Optional[str]:
+        """
+        Main entry point: Generates queries, executes search, emits citations, returns formatted context.
+        Returns None if search fails or yields no results.
+        """
+        try:
+            # 1. Generate Queries
+            await self.em.emit_status("🧠 Generating Search Queries..", False)
+            queries = await self._generate_queries(query, model, max_queries)
+
+            if not queries:
+                queries = [query]  # Fallback
+
+            self.log(f"Generated Queries: {queries}")
+            await self.em.emit_status(f"⛏️ Searching: {len(queries)} topics..", False)
+
+            # 2. Execute Search
+            results = await self._execute_search(queries)
+
+            if self.debug:  # Usa self.debug se disponibile
+                self.debug.dump(results, "RAW SEARCH RESULTS")  # <--- QUI
+
+            if not results:
+                await self.em.emit_status("⚠️ No results found", True)
+                return None
+
+            # 3. Process Results & Emit Citations
+            formatted_context = await self._process_results(results)
+
+            if TRACE:
+                self.debug.log(f"Formatted results: {formatted_context}")
+
+            return formatted_context
+
+        except Exception as e:
+            self.log(f"Search Cycle Failed: {e}", True)
+            await self.em.emit_status(f"❌ Search Error: {str(e)}", True)
+            return None
+
+    async def _generate_queries(self, text: str, model: str, count: int) -> List[str]:
+        """Uses LLM to expand the user request into multiple search queries."""
+        try:
+            prompt = QUERY_GENERATION_TEMPLATE.format(
+                COUNT=count, DATE=datetime.date.today(), REQUEST=text
+            )
+
+            messages = [{"role": "user", "content": prompt}]
+            form_data = {"model": model, "messages": messages, "stream": False}
+
+            # Call LLM
+            response = await generate_chat_completion(
+                self.request, form_data, user=self.user_obj
+            )
+
+            if isinstance(response, dict) and "choices" in response:
+                content = response["choices"][0]["message"]["content"].strip()
+                # Clean markdown
+                content = re.sub(r"```json|```", "", content).strip()
+                try:
+                    data = json.loads(content)
+                    queries = data.get("queries", [])
+                    if isinstance(queries, list):
+                        return queries[:count]
+                except json.JSONDecodeError:
+                    self.log("JSON Decode Error in Query Gen", True)
+                    # Fallback parsing
+                    return [
+                        line.strip('- *"')
+                        for line in content.split("\n")
+                        if line.strip()
+                    ][:count]
+
+            return [text]
+
+        except Exception as e:
+            self.log(f"Query Gen Error: {e}", True)
+            return [text]
+
+    async def _execute_search(self, queries: List[str]) -> Any:
+        """Calls Open WebUI internal search endpoint."""
+        try:
+            form_data = SearchForm(queries=queries, collection_name="")
+            return await process_web_search(self.request, form_data, self.user_obj)
+        except Exception as e:
+            self.log(f"Process Web Search Error: {e}", True)
+            raise e
+
+    async def _process_results(self, results: Any) -> Optional[str]:
+        """Parses results, emits citations, and builds context string."""
+        if not isinstance(results, dict) or "items" not in results:
+            return None
+
+        items = results["items"]
+        docs = results.get("docs", [])
+
+        if not items:
+            return None
+
+        await self.em.emit_status(f"📚 Found {len(items)} sources", False)
+
+        # 1. Emit Citations (UI Badge)
+        for item in items:
+            url = item.get("link", "")
+            title = item.get("title", "Source")
+            snippet = item.get("snippet", "")
+            await self.em.emit_citation(title, snippet, url)
+
+        # 2. Build Context String
+        context_parts = []
+        sources_to_use = docs if docs else items
+
+        for i, source in enumerate(sources_to_use):
+            # 1. Extraction
+            if "content" in source:  # Full Doc
+                text = source["content"]
+                meta = source.get("metadata", {})
+                src_title = meta.get("title", "Source")
+                src_url = meta.get("source", "")
+            else:  # Snippet Item
+                text = source.get("snippet", "")
+                src_title = source.get("title", "Source")
+                src_url = source.get("link", "")
+
+            # 2. CLEANING PIPELINE (Applied to ALL text)
+            # 1. Normalize line endings
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+            # 2. Collapse horizontal whitespace (tabs, non-breaking spaces)
+            text = re.sub(r"[ \t\u00A0]+", " ", text)
+
+            # 3. Remove leading/trailing whitespace per line
+            text = re.sub(r"^\s+|\s+$", "", text, flags=re.MULTILINE)
+
+            # 4. Filter out noise lines (Menu items, buttons, short navigational text)
+            # Removes lines that are likely menu items (short, specific keywords)
+            noise_pattern = r"^(?:Menu|Home|Search|Sign in|Log in|Learn more|Buy now|Check prices|Close|Previous|Next|Skip to content|Cookie Policy|Privacy Policy|Terms of Use)$"
+            text = re.sub(noise_pattern, "", text, flags=re.MULTILINE | re.IGNORECASE)
+
+            # 5. Collapse multiple newlines (3+ becomes 2)
+            text = re.sub(r"\n{3,}", "\n\n", text)
+
+            # 3. Truncate
+            if len(text) > MAX_CHARS_PER_WEB_RESULT:
+                text = text[:MAX_CHARS_PER_WEB_RESULT] + "... [TRUNCATED]"
+
+            context_parts.append(
+                f"--- Source {i+1}: {src_title} ---\nURL: {src_url}\nContent:\n{text}\n"
+            )
+
+        return "\n".join(context_parts)
 
 
 class EmitterService:
@@ -432,6 +638,12 @@ class Filter:
         analysis_length: str = Field(
             default="max 40 words",
             description="Target length for Analytical Context.",
+        )
+        max_search_queries: int = Field(
+            default=3,
+            ge=1,
+            le=10,
+            description="Max number of parallel search queries to generate for broader coverage.",
         )
         temperature: float = Field(
             default=0.15,
@@ -615,7 +827,7 @@ class Filter:
             return (
                 f"{silence}\n"
                 f"TARGET LANGUAGE: {target_lang}.\n"
-                f"Translate content to {target_lang}."
+                f"Translate content to {target_lang}. Use {target_lang} for the key takeaways too."
             )
         else:
             return (
@@ -646,7 +858,7 @@ class Filter:
         explicit_mode = parsed["target_mode"]  # nano, schematic, table, brief, or None
 
         # Fix OWUI v0.8.x
-        is_recursive = "## 🎯 Executive Overview" in content
+        is_recursive = "## 🎯 Executive Summary" in content
 
         user_wants_nano = explicit_mode == "nano" or is_recursive
 
@@ -765,7 +977,13 @@ class Filter:
         self, mode: str, target_len: Optional[int], lang_instr: str, model_info: Any
     ) -> str:
         """Select and format the correct prompt template based on mode and model capability."""
-        # Check for compact model (FORCE_SIMPLE_BRIEF removed)
+        # ⚠️ DEBUG OVERRIDE: Bypass all logic if enabled
+        if DEBUG_PROMPT_OVERRIDE:
+            if self.debug:
+                self.debug.log("⚠️ DEBUG PROMPT OVERRIDE ACTIVE")
+            return DEBUG_PROMPT_TEMPLATE
+
+        # Check for compact model
         is_compact = self._is_compact_model(model_info)
 
         # Determine config key
@@ -780,57 +998,34 @@ class Filter:
                 )
                 self.debug.log(f"Using SIMPLE_BRIEF config for {mid}")
 
-        # Merge Logic: Start with Default Brief, then apply Specific Config
-        if cfg_key in ["brief", "simple_brief"]:
-            config = DEFAULT_BRIEF_CONFIG.copy()
-            config.update(PROMPT_CONFIG.get(cfg_key, {}))
-        else:
-            config = PROMPT_CONFIG.get(cfg_key, DEFAULT_BRIEF_CONFIG)
+        # Load Configuration
+        config = PROMPT_CONFIG.get(cfg_key, PROMPT_CONFIG["brief"])
 
-        # --- DYNAMIC VISUAL LOGIC ---
-        # 1. Determine Visual Rules & Guidelines
-        visual_rules = config["visual_rules"]
-        visual_guidelines = ""
+        # --- DYNAMIC VISUAL ASSEMBLY ---
+        allowed_keys = config.get("visuals", [])
 
-        if mode == "nano":
-            visual_guidelines = VISUAL_GUIDELINES["nano"]
-        elif mode == "table":
-            visual_guidelines = VISUAL_GUIDELINES["table"]
-        elif mode == "schematic":
-            if is_compact:
-                visual_rules = (
-                    "ALLOWED: `mindmap`.\nFORBIDDEN: `graph TD` (Compact Mode)."
-                )
-                visual_guidelines = VISUAL_GUIDELINES["schematic_compact"]
-            else:
-                visual_guidelines = VISUAL_GUIDELINES["schematic"]
-        else:  # brief / simple_brief
-            if is_compact:
-                visual_rules = "ALLOWED: Tables, `mindmap`, `pie`.\nFORBIDDEN: `graph`."
-                visual_guidelines = VISUAL_GUIDELINES["compact"]
-            else:
-                visual_guidelines = VISUAL_GUIDELINES["standard"]
-
-        # 2. Construct Example Block Dynamically
+        # 1. Build Lists & Strings
+        allowed_names = []
+        guidelines_parts = []
+        syntax_parts = []
+        # Note: Example header is still separate as it's part of the main template structure, not the visual rules
         example_block = config.get("example_header", "")
 
-        # Append examples based on allowed visuals
-        if mode != "nano":
-            if "Tables" in visual_rules or "Markdown table" in visual_guidelines:
-                example_block += f"\n{TABLE_EXAMPLE}"
+        for key in allowed_keys:
+            asset = VISUAL_ASSETS.get(key)
+            if asset:
+                allowed_names.append(key)
+                guidelines_parts.append(asset["rule"])
+                syntax_parts.append(asset["syntax"])
 
-            if "`mindmap`" in visual_rules or "mindmap" in visual_guidelines:
-                example_block += f"\n---\n## [TOPIC]\n[Content...]\n{MINDMAP_EXAMPLE}"
+        # 2. Format Components
+        allowed_str = ", ".join(allowed_names) if allowed_names else "NONE"
+        guidelines_str = (
+            "\n".join(guidelines_parts) if guidelines_parts else "NO VISUALS ALLOWED."
+        )
+        syntax_str = "\n".join(syntax_parts)
 
-            # FIX: Add Pie Example if allowed
-            if "`pie`" in visual_rules or "pie" in visual_guidelines:
-                example_block += f"\n---\n## [TOPIC]\n[Content...]\n{PIE_EXAMPLE}"
-
-            # Only add Graph example if explicitly allowed and NOT compact
-            if "`graph TD`" in visual_rules and not is_compact:
-                example_block += f"\n---\n## [TOPIC]\n[Content...]\n{GRAPH_EXAMPLE}"
-
-        # --- END DYNAMIC LOGIC ---
+        # --- END DYNAMIC ASSEMBLY ---
 
         # Determine Summary Block & Lengths
         if mode == "nano":
@@ -852,9 +1047,10 @@ class Filter:
             SUMMARY_BLOCK=summary_block,
             STRUCTURE_BLOCK=config["structure"].replace("{LENGTH}", length_val),
             REPEAT_RULE=config.get("repeat_rule", DEFAULT_REPEAT_RULE),
-            VISUAL_RULES=visual_rules,
-            VISUAL_GUIDELINES=visual_guidelines,  # Injected here
-            EXAMPLE_BLOCK=example_block,  # Injected here
+            ALLOWED_VISUALS_LIST=allowed_str,
+            VISUAL_GUIDELINES=guidelines_str,
+            VISUAL_SYNTAX=syntax_str,
+            EXAMPLE_BLOCK=example_block,
             LANGUAGE_INSTRUCTION=lang_instr,
         )
 
@@ -867,7 +1063,9 @@ class Filter:
                 "{{ANALYSYS_LENGTH}}", self.user_valves.analysis_length
             )
 
-        self.debug.log(f"Prompt:\n" + prompt)
+        if TRACE:
+            self.debug.log(f"Prompt generated for mode {cfg_key}: {prompt}")
+
         return prompt
 
     def _construct_final_message(
@@ -877,24 +1075,35 @@ class Filter:
         Split the prompt into System Instructions and User Data.
         Returns: (system_prompt, user_content)
         """
-        data_content = f"Search Query: {content}" if is_search else content
-        fallback_instr = (
-            "If ambiguous or mixed, default to ENGLISH." if not lang_code else ""
-        )
+        # FIX: Clean Query for Web Search to prevent RAG confusion
+        if is_search:
+            # For Search: System gets the rules, User gets the CLEAN query.
+            # We rely on OWUI RAG to inject the context.
+            system_prompt = (
+                f"{prompt}\n\n"
+                f"SYSTEM OVERRIDE: The user has requested a Web Search. "
+                f"Use the Search Results (Context) provided by the system as your Source Data. "
+                f"Ignore the standard chat style; output ONLY the Report requested in the System Prompt."
+            )
+            user_content = content  # Keep it clean for the search engine
 
-        # SYSTEM: The Rules
-        system_prompt = (
-            f"{prompt}\n\n"
-            f"SYSTEM OVERRIDE: DO NOT CHAT. DO NOT EXPLAIN. OUTPUT ONLY THE REPORT."
-        )
+        else:
+            # For Text Analysis: We wrap the content explicitly
+            fallback_instr = (
+                "If ambiguous or mixed, default to ENGLISH." if not lang_code else ""
+            )
 
-        # USER: The Data
-        user_content = (
-            f"*** BEGIN SOURCE DATA ***\n"
-            f"{data_content}\n"
-            f"*** END SOURCE DATA ***\n\n"
-            f"{fallback_instr}"
-        )
+            system_prompt = (
+                f"{prompt}\n\n"
+                f"SYSTEM OVERRIDE: DO NOT CHAT. DO NOT EXPLAIN. OUTPUT ONLY THE REPORT."
+            )
+
+            user_content = (
+                f"*** BEGIN SOURCE DATA ***\n"
+                f"{content}\n"
+                f"*** END SOURCE DATA ***\n\n"
+                f"{fallback_instr}"
+            )
 
         return system_prompt, user_content
 
@@ -953,7 +1162,8 @@ class Filter:
             EmitterService(__event_emitter__, self),
         )
 
-        self.debug.dump(body, "Body")
+        if TRACE:
+            self.debug.dump(body, "Body")
 
         await self.em.emit_status("🚀 EasyBrief Started", False)
 
@@ -1003,6 +1213,39 @@ class Filter:
         self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
 
         try:
+            # Phase 5.5: Pre-Search Injection (Architecture A)
+            if parsed["is_search"]:
+                # Initialize Portable Handler
+                search_handler = WebSearchHandler(
+                    self.request, __user__["id"], self.em, self.debug
+                )
+
+                # Execute Search Cycle (Generate -> Search -> Process)
+                search_context = await search_handler.search(
+                    content, body.get("model"), self.user_valves.max_search_queries
+                )
+
+                if search_context:
+                    # Update Content & Disable Features for Main Request
+                    content = search_context
+
+                    if "features" not in body:
+                        body["features"] = {}
+                    body["features"]["web_search"] = False
+                    body["features"]["memory"] = False
+
+                    # Treat as Local Brief now
+                    parsed["is_search"] = False
+
+            # --- DEBUG PROBE ---
+            if TRACE:
+                self.debug.log(f"PROBE: parsed['is_search'] = {parsed['is_search']}")
+                self.debug.log(
+                    f"PROBE: features.web_search = {body.get('features', {}).get('web_search')}"
+                )
+                self.debug.log(f"PROBE: content length = {len(content)}")
+                self.debug.dump(content[:500], "PROBE: Content Preview")
+
             # Phase 6: Model Configuration
             self.ctx.model.override_web_search = parsed["is_search"]
             lang_instruction = self._get_language_instruction(parsed["lang"])
@@ -1043,6 +1286,9 @@ class Filter:
                     {"role": "user", "content": user_data},
                 ]
                 self.debug.log("History wiped & Structure enforced: [System, User]")
+                self.debug.log(
+                    f"Model options: temperature:{body['temperature']}|top_p:{body['top_p']}|repeat_penalty:1|frequency_penalty:0"
+                )
 
             else:
                 # Search Only Logic (??)
@@ -1074,7 +1320,7 @@ class Filter:
         except Exception as e:
             await self.debug.error(e)
 
-        return self._suppress_output(body)
+        return body
 
     async def outlet(
         self, body: dict, __user__: dict = None, __event_emitter__=None  # type: ignore
@@ -1093,47 +1339,14 @@ class Filter:
                 content = last_msg.get("content", "")
                 debug_out = self.debug.emit()
 
-                if self.ctx.model.suppress_output is True:
-                    # Overwrite
-                    last_msg["content"] = self.output_content + debug_out
-                elif self.ctx.model.suppress_output is False:
-                    # Append Safe (Gestisce sia Stringhe che Liste)
-                    if isinstance(content, str):
-                        last_msg["content"] += debug_out
-                    elif isinstance(content, list) and debug_out:
-                        content.append({"type": "text", "text": debug_out})
-                        last_msg["content"] = content
+                if isinstance(content, str):
+                    last_msg["content"] += debug_out
+                elif isinstance(content, list) and debug_out:
+                    content.append({"type": "text", "text": debug_out})
+                    last_msg["content"] = content
 
             self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
             st_icon = "🎯" if self.ctx.model.is_brief else "🔍"
             await self.em.emit_status(f"{st_icon} {APP_NAME} Done", True)
-        return body
-
-    def _suppress_output(self, body: dict) -> dict:
-        """
-        Wipes the history and suppresses output for synchronous commands.
-        Skips suppression if web_search is enabled (after potential override).
-        """
-
-        ctx = self.ctx
-        debug = self.debug
-
-        if not ctx or not debug:
-            return body
-
-        if body.get("features", {}).get("web_search") is True:
-            debug.log("Web search active: skipping suppression.")
-
-            return body
-
-        if ctx.model.suppress_output is True:
-            debug.log("Suppressing output...")
-            body["messages"][:] = [{"role": "user", "content": "."}]
-            body["temperature"] = 0.0
-            body["max_tokens"] = 1
-            body["stream"] = False
-
-            if "stop" in body:
-                del body["stop"]
 
         return body
