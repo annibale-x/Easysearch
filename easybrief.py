@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.4.29
+version: 0.5.1
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -383,7 +383,13 @@ class WebSearchHandler:
     Encapsulates query generation, execution, citation emission, and result formatting.
     """
 
-    def __init__(self, request, user_id: str, emitter: Any, debug_service: Any = None):
+    def __init__(
+        self,
+        request,
+        user_id: str,
+        emitter: Any,
+        debug_service: Any = None,
+    ):
         self.request = request
         self.user_id = user_id
         self.em = emitter
@@ -403,12 +409,12 @@ class WebSearchHandler:
         """
         try:
             # 1. Generate Queries
-            await self.em.emit_status("🧠 Generating Search Queries..", False)
+            await self.em.emit_status("Generating Search Queries", False)
             queries = await self._generate_queries(query, model, max_queries)
             if not queries:
                 queries = [query]  # Fallback
             self.log(f"Generated Queries: {queries}")
-            await self.em.emit_status(f"⛏️ Searching: {len(queries)} topics..", False)
+            await self.em.emit_search_queries(queries)
 
             # 2. Execute Search (Bypassing OWUI Loader safely)
             results = await self._execute_search(queries)
@@ -563,7 +569,7 @@ class WebSearchHandler:
         if not items:
             return None
 
-        await self.em.emit_status(f"📚 Found {len(items)} sources", False)
+        await self.em.emit_status(f"Found {len(items)} sources", False)
 
         # 1. Emit Citations & Collect URLs
         urls_to_fetch = []
@@ -579,7 +585,7 @@ class WebSearchHandler:
         fetched_html_map = {}
         if HTTPX_AVAILABLE and LXML_AVAILABLE and urls_to_fetch:
             await self.em.emit_status(
-                f"⚡ Deep reading {len(urls_to_fetch)} pages..", False
+                f"Deep reading {len(urls_to_fetch)} pages", False
             )
             fetched_html_map = await self._fetch_concurrently(urls_to_fetch)
 
@@ -690,6 +696,21 @@ class EmitterService:
                         "source": {"name": name},
                         "document": [document],
                         "metadata": [{"source": source}],
+                    },
+                }
+            )
+
+    async def emit_search_queries(self, queries: List[str]):
+        """Emit search queries to trigger the native UI pills."""
+        if self.emitter:
+            await self.emitter(
+                {
+                    "type": "status",
+                    "data": {
+                        "action": "web_search_queries_generated",
+                        "description": "🔍 Searching",
+                        "queries": queries,
+                        "done": False,
                     },
                 }
             )
@@ -1357,7 +1378,7 @@ class Filter:
         if TRACE:
             self.debug.dump(body, "Body")
 
-        await self.em.emit_status("🚀 EasyBrief Started", False)
+        await self.em.emit_status("EasyBrief Started", False)
 
         # Phase 3: State Management
         self.ctx.model.web_search_original = body.get("features", {}).get(
@@ -1380,12 +1401,12 @@ class Filter:
             self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
 
             if parsed["is_search"]:
-                await self.em.emit_status("⛏️ Extracting Search Query..", False)
+                await self.em.emit_status("Extracting Search Query", False)
                 content = await self._extract_query(
                     content, body.get("model"), __user__["id"], parsed["lang"]
                 )
                 self.debug.log(f"Extracted Query: {content}")
-                await self.em.emit_status(f"🔍 Searching: {content[:60]}...", False)
+                await self.em.emit_status(f"Searching: {content[:60]}.", False)
 
         # Phase 5: Threshold Check (Anti-Spam)
         min_threshold = self.valves.min_input_threshold
@@ -1397,7 +1418,7 @@ class Filter:
             self.debug.log(
                 f"Skipping Brief: content too short ({len(content.split())} < {min_threshold} words)."
             )
-            await self.em.emit_status("💬 Input too short for Brief", True)
+            await self.em.emit_status("Input too short for Brief", True)
             if body["messages"]:
                 body["messages"][-1]["content"] = content
             return body
@@ -1518,27 +1539,40 @@ class Filter:
         self, body: dict, __user__: dict = None, __event_emitter__=None  # type: ignore
     ) -> dict:
         """Process the outgoing response and restore web search state."""
-        if self.ctx and self.ctx.model.executed:
-            # Restore original model if it was swapped
-            if self.ctx.model.original_model:
-                body["model"] = self.ctx.model.original_model
-            if "features" in body:
-                body["features"]["web_search"] = self.ctx.model.web_search_original
+        try:
+            if self.ctx and self.ctx.model.executed:
+                # Restore original model if it was swapped
+                if self.ctx.model.original_model:
+                    body["model"] = self.ctx.model.original_model
 
-            # Handle Output & Debug
-            if "messages" in body and len(body["messages"]) > 0:
-                last_msg = body["messages"][-1]
-                content = last_msg.get("content", "")
-                debug_out = self.debug.emit()
+                if "features" in body:
+                    body["features"]["web_search"] = self.ctx.model.web_search_original
 
-                if isinstance(content, str):
-                    last_msg["content"] += debug_out
-                elif isinstance(content, list) and debug_out:
-                    content.append({"type": "text", "text": debug_out})
-                    last_msg["content"] = content
+                # Handle Output & Debug
+                if "messages" in body and len(body["messages"]) > 0:
+                    last_msg = body["messages"][-1]
+                    content = last_msg.get("content", "")
+                    debug_out = self.debug.emit()
 
-            self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
-            st_icon = "🎯" if self.ctx.model.is_brief else "🔍"
-            await self.em.emit_status(f"{st_icon} {APP_NAME} Done", True)
+                    if isinstance(content, str):
+                        last_msg["content"] += debug_out
+                    elif isinstance(content, list) and debug_out:
+                        content.append({"type": "text", "text": debug_out})
+                        last_msg["content"] = content
+
+                self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
+
+                # Minimal completion status
+                await self.em.emit_status("EasyBrief completed", True)
+
+        except Exception as e:
+            # Safety net for outlet errors
+            print(f"EasyBrief Outlet Error: {e}")
+
+        finally:
+            # ⚠️ CRITICAL FIX: Prevent State Leaking
+            # Reset context to ensure subsequent requests (like Title Generation)
+            # do not trigger this logic again using stale data.
+            self.ctx = None
 
         return body

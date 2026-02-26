@@ -1,3 +1,8 @@
+* 2026-02-26: v0.5.1 - Turbo Architecture & Stability (Hannibal)
+  * Major Refactor: Introduced `ShadowRequest` and `httpx` parallel loader.
+  * UI Overhaul: Native search pills and professional status messages.
+  * Bugfix: Solved double-execution issue on chat title generation (State Cleanup).
+
 * 2026-02-26: v0.4.29 - Turbo Web Loader & Shadow Request (Hannibal)
   * Implemented `ShadowRequest` proxy to safely bypass OWUI's default loader without race conditions.
   * Added `_fetch_concurrently` using `httpx` for parallel, high-speed HTML retrieval.
