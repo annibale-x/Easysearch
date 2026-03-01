@@ -1,6 +1,6 @@
 """
-title: 🎯 EasyBrief - Web Search & Executive Summaries
-version: 0.5.1
+title: EasyBrief - Web Search & Executive Summaries
+version: 0.5.2
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -42,7 +42,7 @@ except ImportError:
 
 # --- CONSTANTS ---
 
-APP_ICON = "✨"
+APP_ICON = "🎯"
 APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
@@ -188,7 +188,6 @@ pie
     },
 }
 
-
 # --- PROMPT CONFIGURATION MAP ---
 
 PROMPT_CONFIG = {
@@ -288,18 +287,29 @@ class ConfigService:
 
     def __init__(self, ctx):
         """Initialize the ConfigService with context and default model state."""
+
         self.ctx = ctx
         self.valves, self.user_valves = ctx.valves, ctx.user_valves
         self.start_time = time.time()
-
-        # Helper to construct display triggers based on config
         S = self.valves.search_prefix
         B = self.valves.brief_prefix
+        gap_filler_state = self.valves.auto_recovery_fetch
+
+        if (
+            hasattr(self.user_valves, "auto_recovery_fetch")
+            and self.user_valves.auto_recovery_fetch is not None
+        ):
+            gap_filler_state = self.user_valves.auto_recovery_fetch
 
         self.model = Store(
             {
                 "search_prefix": f"{S}",
                 "brief_prefix": f"{B}",
+                "max_total_results": self.valves.max_total_results,
+                "max_download_bytes": self.valves.max_download_mb * 1024 * 1024,
+                "search_timeout": self.valves.search_timeout,
+                "oversampling_factor": self.valves.oversampling_factor,
+                "auto_recovery_fetch": gap_filler_state,
                 "debug": ctx.valves.debug or ctx.user_valves.debug,
                 "user_query": "",
                 "id": "",
@@ -326,64 +336,97 @@ class ConfigService:
 class ShadowRequest:
     """
     A thread-safe proxy for the Request object.
-    It intercepts access to `app.state.config.BYPASS_WEB_SEARCH_WEB_LOADER`
-    without modifying the global singleton state.
-
-    This prevents Race Conditions where modifying the global config for one user
-    would affect all other concurrent users on the server.
+    Allows overriding specific app.state.config attributes dynamically.
     """
 
-    def __init__(self, original_request, override_bypass: bool):
-        self._req = original_request
-        self._override_bypass = override_bypass
+    def __init__(self, original_request, overrides: Dict[str, Any]):
+        """Initialize the ShadowRequest with dynamic configuration overrides."""
 
-        # 3. Config Proxy: Intercepts the specific config key
+        self._req = original_request
+        self._overrides = overrides
+
         class ConfigProxy:
-            def __init__(self, real_config, bypass_val):
+
+            def __init__(self, real_config, overrides):
+                """Initialize the ConfigProxy."""
+
                 self._real = real_config
-                self._bypass = bypass_val
+                self._overrides = overrides
 
             def __getattr__(self, name):
-                if name == "BYPASS_WEB_SEARCH_WEB_LOADER":
-                    return self._bypass
+                """Intercept configuration attribute access."""
+
+                if name in self._overrides:
+                    return self._overrides[name]
                 return getattr(self._real, name)
 
-        # 2. State Proxy: Wraps the config
         class StateProxy:
+
             def __init__(self, real_state, config_proxy):
+                """Initialize the StateProxy."""
+
                 self._real = real_state
                 self.config = config_proxy
 
             def __getattr__(self, name):
+                """Intercept state attribute access."""
+
                 if name == "config":
                     return self.config
                 return getattr(self._real, name)
 
-        # 1. App Proxy: Wraps the state
         class AppProxy:
+
             def __init__(self, real_app, state_proxy):
+                """Initialize the AppProxy."""
+
                 self._real = real_app
                 self.state = state_proxy
 
             def __getattr__(self, name):
+                """Intercept app attribute access."""
+
                 if name == "state":
                     return self.state
                 return getattr(self._real, name)
 
-        # Build the nested proxy structure
         real_app = original_request.app
         real_state = real_app.state
         real_config = real_state.config
-
         self.app = AppProxy(
-            real_app, StateProxy(real_state, ConfigProxy(real_config, override_bypass))
+            real_app, StateProxy(real_state, ConfigProxy(real_config, overrides))
         )
 
     def __getattr__(self, name):
-        # Delegate everything else to the real request
+        """Delegate unrecognized attributes to the original request."""
+
         if name == "app":
             return self.app
         return getattr(self._req, name)
+
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/122.0.6261.89 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.105 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.105 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; SAMSUNG SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/24.0 Chrome/117.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Vivaldi/6.6.3271.45",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+]
 
 
 class WebSearchHandler:
@@ -393,20 +436,28 @@ class WebSearchHandler:
     Implements the 'Turbo Loader' architecture using ShadowRequest and HTTPX.
     """
 
+
     def __init__(
         self,
         request,
         user_id: str,
         emitter: Any,
+        config: Any,
         debug_service: Any = None,
     ):
+        """Initialize the WebSearchHandler with advanced configuration."""
+
         self.request = request
         self.user_id = user_id
         self.em = emitter
+        self.cfg = config
         self.debug = debug_service
         self.user_obj = Users.get_user_by_id(user_id)
 
+
     def log(self, msg: str, is_error: bool = False):
+        """Log a debug message conditionally."""
+
         if self.debug:
             self.debug.log(f"[WebSearchHandler] {msg}", is_error)
 
@@ -490,66 +541,118 @@ class WebSearchHandler:
 
     async def _execute_search(self, queries: List[str]) -> Any:
         """
-        Calls Open WebUI search using a Shadow Request to safely bypass the loader.
-        This ensures we get only the URLs quickly, without waiting for OWUI's slow scraping.
+        Calls Open WebUI search with oversampling to ensure enough candidates after deduplication.
         """
-        try:
-            # Create a thread-safe proxy request that lies about the config
-            # This prevents Race Conditions on the global app.state
-            shadow_req = ShadowRequest(self.request, override_bypass=True)
 
+        try:
+            factor = getattr(self.cfg, "oversampling_factor", 2)
+            # Default target to 5 per query if not specified, scaled by oversampling
+            count_per_query = 5 * factor
+
+            self.log(
+                f"Executing Shadow Request. Oversampling: {factor}x. Target Per Query: {count_per_query}"
+            )
+
+            overrides = {
+                "BYPASS_WEB_SEARCH_WEB_LOADER": True,
+                "WEB_SEARCH_RESULT_COUNT": count_per_query,
+            }
+
+            shadow_req = ShadowRequest(self.request, overrides=overrides)
             form_data = SearchForm(queries=queries, collection_name="")
 
-            # Pass the shadow request instead of the real one
             return await process_web_search(shadow_req, form_data, self.user_obj)
 
         except Exception as e:
             self.log(f"Process Web Search Error: {e}", True)
             raise e
 
+    def _sanitize_url(self, url: str) -> str:
+        """
+        Removes common tracking parameters and fragments from the URL to improve deduplication.
+        """
+
+        from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
+
+        try:
+            parsed = urlparse(url)
+            tracking_params = {
+                "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+                "gclid", "fbclid", "msclkid", "mc_cid", "mc_eid",
+            }
+            query_dict = dict(parse_qsl(parsed.query))
+            filtered_query = {
+                k: v for k, v in query_dict.items() if k.lower() not in tracking_params
+            }
+            return urlunparse(
+                parsed._replace(query=urlencode(filtered_query), fragment="")
+            )
+        except Exception:
+            return url
+
     async def _fetch_concurrently(self, urls: List[str]) -> Dict[str, str]:
         """
-        Fetches multiple URLs in parallel using HTTPX.
-        Respects Proxy settings and Custom CA Bundles for enterprise compatibility.
+        Fetches multiple URLs in parallel using HTTPX with streaming, size limit and UA rotation.
         """
+
         if not HTTPX_AVAILABLE or not urls:
             return {}
 
         results = {}
-        # Detect Custom CA Bundle (for corporate/self-signed certs)
         verify_ssl = os.environ.get("REQUESTS_CA_BUNDLE", True)
+
         if verify_ssl == "":
             verify_ssl = True
 
-        timeout = httpx.Timeout(8.0, connect=5.0)
+        max_bytes = getattr(self.cfg, "max_download_bytes", 1024 * 1024)
+        req_timeout = float(getattr(self.cfg, "search_timeout", 8.0))
+
+        self.log(
+            f"Fetching {len(urls)} URLs. Limit: {max_bytes} bytes, Timeout: {req_timeout}s"
+        )
+
+        timeout = httpx.Timeout(req_timeout, connect=5.0)
         limits = httpx.Limits(max_keepalive_connections=5, max_connections=10)
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
+
+        async def fetch_single(client, url):
+            try:
+                headers = {"User-Agent": random.choice(USER_AGENTS)}
+                req = client.build_request("GET", url, headers=headers)
+                response = await client.send(req, stream=True)
+
+                if response.status_code != 200:
+                    await response.aclose()
+                    return None
+
+                body = b""
+                async for chunk in response.aiter_bytes():
+                    body += chunk
+                    if len(body) > max_bytes:
+                        await response.aclose()
+                        break
+
+                await response.aclose()
+                encoding = response.encoding or "utf-8"
+                return body.decode(encoding, errors="replace")
+            except Exception as e:
+                if self.debug:
+                    self.debug.log(f"Fetch failed for {url}: {e}")
+                return None
 
         try:
-            # trust_env=True reads HTTP_PROXY/HTTPS_PROXY automatically
             async with httpx.AsyncClient(
                 timeout=timeout,
                 limits=limits,
-                headers=headers,
                 follow_redirects=True,
                 verify=verify_ssl,
                 trust_env=True,
             ) as client:
-
-                tasks = []
-                for url in urls:
-                    tasks.append(client.get(url))
-
-                # Execute parallel fetch
+                tasks = [fetch_single(client, url) for url in urls]
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for url, resp in zip(urls, responses):
-                    if isinstance(resp, httpx.Response) and resp.status_code == 200:
-                        results[url] = resp.text
-                    elif self.debug and isinstance(resp, Exception):
-                        self.debug.log(f"Fetch failed for {url}: {resp}")
+                for url, content in zip(urls, responses):
+                    if isinstance(content, str):
+                        results[url] = content
 
         except Exception as e:
             self.log(f"HTTPX Batch Error: {e}", True)
@@ -582,94 +685,132 @@ class WebSearchHandler:
 
     async def _process_results(self, results: Any) -> Optional[str]:
         """
-        Parses results, fetches raw HTML in parallel, and builds context.
-        Implements a Hybrid Strategy: LXML (Primary) -> Snippet (Fallback).
+        Parses results, fetches raw HTML in parallel with a fallback mechanism (Gap-Filler).
+        Injects snippets from the entire oversampling pool for maximum signal.
         """
+
         if not isinstance(results, dict) or "items" not in results:
             return None
 
-        items = results["items"]
-        # Note: 'docs' will be empty/useless because we bypassed the loader!
+        raw_items = results["items"]
 
-        if not items:
+        if not raw_items:
             return None
 
-        await self.em.emit_status(f"Found {len(items)} sources", False)
+        seen_urls = set()
+        unique_items = []
 
-        # 1. Emit Citations & Collect URLs
-        urls_to_fetch = []
-        for item in items:
-            url = item.get("link", "")
-            if url:
-                urls_to_fetch.append(url)
-            await self.em.emit_citation(
-                item.get("title", "Source"), item.get("snippet", ""), url
-            )
+        bad_exts = (
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ".zip", ".tar", ".gz", ".exe",
+        )
 
-        # 2. Parallel Fetch (The Turbo Boost)
+        for item in raw_items:
+            original_url = item.get("link", "")
+            if not original_url:
+                continue
+
+            clean_url_base = original_url.lower().split("?")[0].split("#")[0]
+            if clean_url_base.endswith(bad_exts):
+                continue
+
+            sanitized_url = self._sanitize_url(original_url)
+
+            if sanitized_url not in seen_urls:
+                seen_urls.add(sanitized_url)
+                item["sanitized_link"] = sanitized_url
+                unique_items.append(item)
+
+        target_count = getattr(self.cfg, "max_total_results", 20)
+        
+        self.log(
+            f"Deduplication: {len(raw_items)} raw -> {len(unique_items)} unique. Target: {target_count}"
+        )
+
+        candidates = unique_items[:target_count]
+        remaining_pool = unique_items[target_count:]
+
+        urls_to_fetch = [item.get("link") for item in candidates]
         fetched_html_map = {}
+
         if HTTPX_AVAILABLE and LXML_AVAILABLE and urls_to_fetch:
-            await self.em.emit_status(f"Deep reading {len(urls_to_fetch)} pages", False)
+            await self.em.emit_status(f"Reading {len(urls_to_fetch)} pages", False)
             fetched_html_map = await self._fetch_concurrently(urls_to_fetch)
 
-        # 3. Build Context
-        context_parts = []
+        success_count = len([v for v in fetched_html_map.values() if v])
+        enable_gap = getattr(self.cfg, "auto_recovery_fetch", True)
 
-        # Expanded Noise Pattern (Compiled once for performance)
+        if enable_gap and success_count < target_count and remaining_pool:
+            gap_size = target_count - success_count
+            
+            if self.debug:
+                self.debug.log(f"Gap detected: {gap_size} missing. Triggering thorough search.")
+                
+            msg = f"Recovering {gap_size} failed {'page' if gap_size == 1 else 'pages'}"
+            await self.em.emit_status(msg, False)
+
+            backup_candidates = remaining_pool[:gap_size]
+            remaining_pool = remaining_pool[gap_size:]
+
+            backup_urls = [item.get("link") for item in backup_candidates]
+            backup_html_map = await self._fetch_concurrently(backup_urls)
+
+            fetched_html_map.update(backup_html_map)
+            
+            new_candidates = []
+            for c in candidates:
+                if fetched_html_map.get(c.get("link")):
+                    new_candidates.append(c)
+                else:
+                    remaining_pool.insert(0, c)
+
+            new_candidates.extend(backup_candidates)
+            candidates = new_candidates
+
+        context_parts = []
         noise_pattern = re.compile(
             r"^(?:menu|home|search|sign in|log in|sign up|register|subscribe|newsletter|account|profile|cart|checkout|buy now|shop|close|cancel|skip to content|next|previous|back to top|privacy policy|terms|cookie|copyright|all rights reserved|legal|contact us|help|support|faq|social|follow us|share|facebook|twitter|instagram|linkedin|youtube|advertisement|sponsored|promoted|related posts|read more|loading|posted by|written by|author|category|tags)$",
             re.IGNORECASE,
         )
 
-        for i, item in enumerate(items):
+        source_id = 1
+
+        for item in candidates:
             url = item.get("link", "")
-            title = item.get("title", "Source")
+            snippet = item.get("snippet", "")
+            raw_html = fetched_html_map.get(url)
             text = ""
 
-            # STRATEGY A: High-Quality LXML (From our parallel fetch)
-            if url in fetched_html_map:
-                text = self._clean_with_lxml(fetched_html_map[url])
+            if raw_html:
+                text = self._clean_with_lxml(raw_html)
 
-            # STRATEGY B: Fallback to Snippet (Since we bypassed OWUI loader, we only have snippets as backup)
-            if not text:
-                text = item.get("snippet", "")
+            if not text or len(text) < len(snippet) or text.count("\ufffd") > 10:
+                text = f"[Note: Using Search Snippet due to low-quality fetch] {snippet}"
 
-            # 4. CLEANING PIPELINE (Universal Polish)
-            # Applied to ALL text sources (LXML or Fallback) for maximum purity.
-
-            # A. Basic Normalization
             text = text.replace("\r\n", "\n").replace("\r", "\n")
-            text = re.sub(r"[ \t\u00A0]+", " ", text)  # Collapse horizontal whitespace
+            text = re.sub(
+                r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ufffd\u200b-\u200f\u202a-\u202e\u2066-\u2069]+",
+                " ",
+                text,
+            )
+            text = re.sub(r"[ \t\u00A0]+", " ", text)
 
-            # B. Line-by-Line Filtering
             lines = text.split("\n")
             cleaned_lines = []
             prev_line = ""
 
             for line in lines:
                 line = line.strip()
-
-                # Filter 1: Empty lines
                 if not line:
                     continue
-
-                # Filter 2: Exact Noise Match (Case Insensitive)
-                if noise_pattern.match(line):
+                if noise_pattern.match(line) or "Accetta tutto" in line or "Rifiuta tutto" in line:
                     continue
-
-                # Filter 3: Short structural junk (e.g., "|", ">>", "---", "•")
-                # Removes lines < 5 chars that contain NO alphanumeric characters
                 if len(line) < 5 and not any(c.isalnum() for c in line):
                     continue
-
-                # Filter 4: Date/Time clutter (heuristic)
-                # Removes lines that are just dates like "Oct 12, 2023" or "12/10/2023"
                 if len(line) < 20 and re.match(
                     r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\w{3} \d{1,2},? \d{4}", line
                 ):
                     continue
-
-                # Filter 5: Consecutive Deduplication
                 if line == prev_line:
                     continue
 
@@ -677,17 +818,32 @@ class WebSearchHandler:
                 prev_line = line
 
             text = "\n".join(cleaned_lines)
-
-            # C. Collapse multiple newlines (3+ becomes 2)
             text = re.sub(r"\n{3,}", "\n\n", text)
 
-            # 3. Truncate
             if len(text) > MAX_CHARS_PER_WEB_RESULT:
                 text = text[:MAX_CHARS_PER_WEB_RESULT] + "... [TRUNCATED]"
 
             context_parts.append(
-                f"--- Source {i+1}: {title} ---\nURL: {url}\nContent:\n{text}\n"
+                f"--- Source {source_id}: {item.get('title', 'Source')} ---\n"
+                f"URL: {url}\n"
+                f"Summary (Snippet): {snippet}\n"
+                f"Full Content:\n{text}\n"
             )
+
+            await self.em.emit_citation(
+                item.get("title", "Source"), item.get("snippet", ""), url
+            )
+            source_id += 1
+
+        if remaining_pool:
+            context_parts.append("\n--- ADDITIONAL CONTEXTUAL SNIPPETS (UNREAD PAGES) ---")
+            for item in remaining_pool:
+                context_parts.append(
+                    f"Source {source_id} (Snippet Only): {item.get('title')}\n"
+                    f"URL: {item.get('link')}\n"
+                    f"Content: {item.get('snippet')}\n"
+                )
+                source_id += 1
 
         return "\n".join(context_parts)
 
@@ -820,6 +976,7 @@ class DebugService:
 
 
 class Filter:
+
     class Valves(BaseModel):
         search_prefix: str = Field(
             default="?",
@@ -836,6 +993,33 @@ class Filter:
         min_input_threshold: int = Field(
             default=15,
             description="Min word count of input text required to trigger a Brief report (Anti-spam).",
+        )
+        max_total_results: int = Field(
+            default=20,
+            ge=1,
+            le=50,
+            description="Hard limit on total pages to read (Safety Cap).",
+        )
+        max_download_mb: int = Field(
+            default=1,
+            ge=1,
+            description="Max download size per page in MB (Anti-Flood).",
+        )
+        search_timeout: int = Field(
+            default=8,
+            ge=1,
+            le=30,
+            description="Timeout in seconds for web requests.",
+        )
+        oversampling_factor: int = Field(
+            default=2,
+            ge=1,
+            le=4,
+            description="Multiplier for search results to provide a buffer for deduplication/dead links.",
+        )
+        auto_recovery_fetch: bool = Field(
+            default=False,
+            description="If enabled, performs a second search round to replace failed or empty pages.",
         )
         debug: bool = Field(default=False)
 
@@ -858,7 +1042,7 @@ class Filter:
             le=500,
             description="Target word count for Nano briefs (Range: 50-500).",
         )
-        summary_length: str = Field(  # RENAMED from overview_length
+        summary_length: str = Field(
             default="max 100 words",
             description="Target length for Summary Overview.",
         )
@@ -887,6 +1071,10 @@ class Filter:
             ge=0.1,
             le=1.0,
             description="Vocabulary filter (Lower = More focused). Default: 0.8",
+        )
+        auto_recovery_fetch: bool = Field(
+            default=False,
+            description="If enabled, performs a second search round to replace failed or empty pages.",
         )
         debug: bool = Field(default=False)
 
@@ -1410,10 +1598,11 @@ class Filter:
         try:
             # Phase 5.5: Pre-Search Injection (Architecture A)
             if parsed["is_search"]:
-                # Initialize Portable Handler
+                # Initialize Portable Handler with unified configuration model
                 search_handler = WebSearchHandler(
-                    self.request, __user__["id"], self.em, self.debug
+                    self.request, __user__["id"], self.em, self.ctx.model, self.debug
                 )
+                
                 # Execute Search Cycle (Generate -> Search -> Process)
                 search_context = await search_handler.search(
                     content, body.get("model"), self.user_valves.max_search_queries
