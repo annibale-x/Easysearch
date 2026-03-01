@@ -1,3 +1,19 @@
+* 2026-03-01: v0.5.3 - Prompt Optimization & Sanitizer Pipeline (Hannibal)  
+  * Reverted architecture to standard System Prompt injection.
+  * Optimized mindmap prompt from negative constraints to active task ("Remove parentheses from labels text").
+  * Implemented robust multi-stage output sanitization pipeline (`_sanitize_output`).
+  * Added Depth-Parser logic in `_sanitize_mermaid_mindmap` to handle nested bracket edge cases gracefully.
+  * Added `_sanitize_mermaid_graph` to fix trailing character syntax errors in graph TD.
+  * Added `_sanitize_text_markers` to remove conversational LLM noise.
+  * Configured sanitizers to be globally toggled via `SANITIZE_OUTPUT` boolean constant.
+
+* 2026-03-01: v0.5.2 - Web Search Engine Upgrade & Turbo Loader Integration (Hannibal)
+  * Ported advanced WebSearchHandler from EasySearch with lxml parsing and fallback snippets.
+  * Implemented ShadowRequest v2 proxy with dictionary-based dynamic overrides.
+  * Added concurrent HTTPX fetching with User-Agent rotation and strict timeout/size limits.
+  * Integrated oversampling factor and auto-recovery fetch (Gap-Filler) for resilient web scraping.
+  * Unified configuration state in ConfigService (Admin vs User valves priority).
+
 * 2026-02-26: v0.5.1 - Turbo Architecture & Stability (Hannibal)
   * Major Refactor: Introduced `ShadowRequest` and `httpx` parallel loader.
   * UI Overhaul: Native search pills and professional status messages.

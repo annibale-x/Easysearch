@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.2
+version: 0.5.3
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -47,7 +47,8 @@ APP_NAME = "EasyBrief"
 OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
 MAX_CHARS_PER_WEB_RESULT = 10000
-TRACE = False
+TRACE = True
+SANITIZE_OUTPUT = False
 
 
 # --- PROMPT TEMPLATES ---
@@ -61,7 +62,7 @@ Task: Say HELLO WORLD 😁.
 """
 
 # Executive Summary Block Template
-SUMMARY_BLOCK_TEMPLATE = """Start your output with:
+SUMMARY_BLOCK_TEMPLATE = """No prehables. Start your output exactly with:
 ## 🎯 Executive Summary
 (Use EXACTLY this header with the 🎯 emoji).
 Write a dense summary  here. Target length: {LENGTH}.
@@ -120,39 +121,41 @@ VISUAL_ASSETS = {
     "mindmap": {
         "rule": "IF hierarchical structure (root->branch->leaf) exists → USE Mermaid mindmap. ELSE skip.",
         "syntax": """**Mindmaps**: Mermaid `mindmap`.
+
     RULES:
     1. Only one root node can exist, e.g., `root((Root node description))`.
     2. Every node except the root MUST be indented with exactly two spaces of indentation. Each subsequent hierarchical level must add exactly two additional spaces (4, 6, 8, etc.).
     3. Use a descriptive label for each line.
-    4. Use parentheses ONLY to define node shapes.
-    5. NO brackets of any kind (), [], {} are allowed INSIDE the text of the label itself; replace them with double quotes (") if needed.
-    6. If a label violates ANY rule, fix it immediately before printing.
-    7. Always specify the code-block type: ```mermaid.
-    8. Follow EXACTLY the syntax of the following example:
+    4. Remove any parentheses from labels text. 
+    5. Always specify the code-block type: ```mermaid.
+    6. Follow EXACTLY the syntax of the following example:
+
 ```mermaid
 mindmap
   root((Model))
     Problems
       Fragile syntax
-      "No brackets in labels"
+      No parentheses in labels
     Solutions
       Very specific prompt
       Rigid system prompt
-```
-    9. MENTALLY verify that the mindmap you are about to print strictly adheres to the previous 8 rules. If they are not all satisfied, mentally re-run the mindmap generation for (max 10 times) until all rules are met.
+```\n\n
+    7. MENTALLY verify that the mindmap you are about to print strictly adheres to the previous 6 rules. If they are not all satisfied, mentally re-run the mindmap generation for (max 10 times) until all rules are met.
     """,
     },
     "graph": {
         "rule": "IF sequential process/flow/decision exists → USE Mermaid graph TD. ELSE skip.",
         "syntax": """**Flowcharts**: Mermaid `graph TD`.
     RULES:
-    1. Nodes Syntax: `ID("Text")`, `ID["Text"]`, `ID{"Text"}`.
-    2 Connectors Label EXACT Syntax: `|"Label"|` (use pipes before and after the label text)
-    3 Connectors Syntax: `ID1 -->|"Label"| ID2` (No spaces between pipes and arrows).
+    1. Nodes Syntax: `ID("Text")`, `ID["Text"]`, `ID{"Text"}`. 
+    2. Node labels must be enclosed in double quotes.
+    2. Connectors Label EXACT Syntax: `|"Label"|` (use pipes before and after the label text)
+    3. Connectors Syntax: `ID1 -->|"Label"| ID2` (No spaces between pipes and arrows).
     4. Logic: No dead ends. All negative paths must loop back to a previous check or start.
     5. No trailing characters after brackets: `ID["Text"]` is correct, `ID["Text"])` is a failure.
     6. Always specify the code-block type: ```mermaid.
     7. Follow EXACTLY the syntax and logic structure of the provided one-shot:
+
 ```mermaid
 graph TD
     A("Process Start") -->|"Initialize"| B{"Validation"}
@@ -163,7 +166,8 @@ graph TD
     E -->|"Critical Error"| F["System Reset"]
     F --> A
     E -->|"Success"| G("End: Goal Reached")
-```
+```\n\n
+
     8. MENTALLY verify that the graph TD you are about to print strictly adheres to the previous 7 rules. If they are not all satisfied, mentally re-run the mindmap generation for maximum 10 times until all rules are met.
     """,
     },
@@ -182,7 +186,7 @@ pie
     "Category A" : 40
     "Category B" : 35
     "Category C" : 25
-```
+```\n\n
     6. MENTALLY VERIFY: If the data does not strictly fit these rules, DO NOT generate the chart.
     """,
     },
@@ -193,28 +197,28 @@ pie
 PROMPT_CONFIG = {
     "nano": {
         "action": "Compress text into a Flash Brief.",
-        "structure": "## 🎯 Nano Brief\n(Single dense paragraph of {LENGTH}).",
+        "structure": "No prehables. Start your output exactly with: ## 🎯 Nano Brief\n(Single dense paragraph of {LENGTH}).",
         "visuals": [],  # No visuals
         "repeat_rule": "NANO BRIEF CONTENT:",
         "example_header": "## 🎯 Nano Brief\n[Content...]",
     },
     "table": {
         "action": "Reorganize text into a Structured Report.",
-        "structure": "## [EMOJI] [TOPIC TITLE]\n**Insight**: (2-3 sentences).\n**Visual**: Raw Markdown Table ONLY.",
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Insight**: (2-3 sentences).\n[Raw Markdown Table ONLY.]",
         "visuals": ["table"],
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Insight**: [Analysis...]""",
     },
     "schematic": {
         "action": "Reorganize text into a Visual Technical Report.",
-        "structure": "## [EMOJI] [TOPIC TITLE]\n**Context**: (1 sentence).\n**Visual**: Mermaid Mindmap OR Graph TD.",
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Context**: (1 sentence).\n[Mermaid Mindmap OR Graph TD.]",
         "visuals": ["mindmap", "graph"],
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Context**: [Context...]""",
     },
     "brief": {
         "action": "Generate a Structured Executive Report.",
-        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n**Visual**: Select the best format from the ALLOWED list below.",
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n[Select the best visual format from the ALLOWED list below.]",
         "visuals": ["table", "mindmap", "pie", "graph"],
         "repeat_rule": DEFAULT_REPEAT_RULE,
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
@@ -224,7 +228,7 @@ PROMPT_CONFIG = {
     # Fallback for compact models (Graph removed for stability)
     "simple_brief": {
         "action": "Generate a Structured Executive Report.",
-        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n**Visual**: Select the best format from the ALLOWED list below.",
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n[Select the best visual format from the ALLOWED list below.]",
         "visuals": ["table", "mindmap", "pie"],
         "repeat_rule": DEFAULT_REPEAT_RULE,
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
@@ -436,7 +440,6 @@ class WebSearchHandler:
     Implements the 'Turbo Loader' architecture using ShadowRequest and HTTPX.
     """
 
-
     def __init__(
         self,
         request,
@@ -453,7 +456,6 @@ class WebSearchHandler:
         self.cfg = config
         self.debug = debug_service
         self.user_obj = Users.get_user_by_id(user_id)
-
 
     def log(self, msg: str, is_error: bool = False):
         """Log a debug message conditionally."""
@@ -577,8 +579,16 @@ class WebSearchHandler:
         try:
             parsed = urlparse(url)
             tracking_params = {
-                "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-                "gclid", "fbclid", "msclkid", "mc_cid", "mc_eid",
+                "utm_source",
+                "utm_medium",
+                "utm_campaign",
+                "utm_term",
+                "utm_content",
+                "gclid",
+                "fbclid",
+                "msclkid",
+                "mc_cid",
+                "mc_eid",
             }
             query_dict = dict(parse_qsl(parsed.query))
             filtered_query = {
@@ -701,8 +711,17 @@ class WebSearchHandler:
         unique_items = []
 
         bad_exts = (
-            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-            ".zip", ".tar", ".gz", ".exe",
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".xls",
+            ".xlsx",
+            ".ppt",
+            ".pptx",
+            ".zip",
+            ".tar",
+            ".gz",
+            ".exe",
         )
 
         for item in raw_items:
@@ -722,7 +741,7 @@ class WebSearchHandler:
                 unique_items.append(item)
 
         target_count = getattr(self.cfg, "max_total_results", 20)
-        
+
         self.log(
             f"Deduplication: {len(raw_items)} raw -> {len(unique_items)} unique. Target: {target_count}"
         )
@@ -742,10 +761,12 @@ class WebSearchHandler:
 
         if enable_gap and success_count < target_count and remaining_pool:
             gap_size = target_count - success_count
-            
+
             if self.debug:
-                self.debug.log(f"Gap detected: {gap_size} missing. Triggering thorough search.")
-                
+                self.debug.log(
+                    f"Gap detected: {gap_size} missing. Triggering thorough search."
+                )
+
             msg = f"Recovering {gap_size} failed {'page' if gap_size == 1 else 'pages'}"
             await self.em.emit_status(msg, False)
 
@@ -756,7 +777,7 @@ class WebSearchHandler:
             backup_html_map = await self._fetch_concurrently(backup_urls)
 
             fetched_html_map.update(backup_html_map)
-            
+
             new_candidates = []
             for c in candidates:
                 if fetched_html_map.get(c.get("link")):
@@ -785,7 +806,9 @@ class WebSearchHandler:
                 text = self._clean_with_lxml(raw_html)
 
             if not text or len(text) < len(snippet) or text.count("\ufffd") > 10:
-                text = f"[Note: Using Search Snippet due to low-quality fetch] {snippet}"
+                text = (
+                    f"[Note: Using Search Snippet due to low-quality fetch] {snippet}"
+                )
 
             text = text.replace("\r\n", "\n").replace("\r", "\n")
             text = re.sub(
@@ -803,7 +826,11 @@ class WebSearchHandler:
                 line = line.strip()
                 if not line:
                     continue
-                if noise_pattern.match(line) or "Accetta tutto" in line or "Rifiuta tutto" in line:
+                if (
+                    noise_pattern.match(line)
+                    or "Accetta tutto" in line
+                    or "Rifiuta tutto" in line
+                ):
                     continue
                 if len(line) < 5 and not any(c.isalnum() for c in line):
                     continue
@@ -836,7 +863,9 @@ class WebSearchHandler:
             source_id += 1
 
         if remaining_pool:
-            context_parts.append("\n--- ADDITIONAL CONTEXTUAL SNIPPETS (UNREAD PAGES) ---")
+            context_parts.append(
+                "\n--- ADDITIONAL CONTEXTUAL SNIPPETS (UNREAD PAGES) ---"
+            )
             for item in remaining_pool:
                 context_parts.append(
                     f"Source {source_id} (Snippet Only): {item.get('title')}\n"
@@ -1490,11 +1519,12 @@ class Filter:
                 f"{prompt}\n\n"
                 f"SYSTEM OVERRIDE: DO NOT CHAT. DO NOT EXPLAIN. OUTPUT ONLY THE REPORT."
             )
+
             user_content = (
                 f"*** BEGIN SOURCE DATA ***\n"
                 f"{content}\n"
                 f"*** END SOURCE DATA ***\n\n"
-                f"{fallback_instr}"
+                f"{fallback_instr}\n"
             )
         return system_prompt, user_content
 
@@ -1602,7 +1632,7 @@ class Filter:
                 search_handler = WebSearchHandler(
                     self.request, __user__["id"], self.em, self.ctx.model, self.debug
                 )
-                
+
                 # Execute Search Cycle (Generate -> Search -> Process)
                 search_context = await search_handler.search(
                     content, body.get("model"), self.user_valves.max_search_queries
@@ -1657,9 +1687,9 @@ class Filter:
                 # Apply Model Parameters (Bias-Free Config)
                 body["temperature"] = self.user_valves.temperature
                 body["top_p"] = self.user_valves.top_p
-                body["top_k"] = 30
-                body["repeat_penalty"] = 1.0
-                body["frequency_penalty"] = 0.0
+                # body["top_k"] = 30
+                # body["repeat_penalty"] = 1.0
+                # body["frequency_penalty"] = 0.0
 
                 # Enforces strict [System, User] structure to prevent context leakage
                 body["messages"] = [
@@ -1720,6 +1750,13 @@ class Filter:
                 if "messages" in body and len(body["messages"]) > 0:
                     last_msg = body["messages"][-1]
                     content = last_msg.get("content", "")
+
+                    # --- THE BRUTEFORCE SANITIZER INJECTION ---
+                    if SANITIZE_OUTPUT and isinstance(content, str):
+                        content = self._sanitize_output(content)
+                        last_msg["content"] = content
+                    # --- END OF SANITIZER ---
+
                     debug_out = self.debug.emit()
 
                     if isinstance(content, str):
@@ -1744,3 +1781,144 @@ class Filter:
             self.ctx = None
 
         return body
+
+    def _sanitize_text_markers(self, content: str) -> str:
+        """
+        Removes LLM conversational filler and hallucinated labels.
+        Targets markers like '**Visual**:' that pollute the report structure.
+        """
+
+        if not isinstance(content, str):
+            return content
+
+        # Strip bold labels often generated before code blocks
+        safe_content = re.sub(
+            r"\*\*Visuals?\*\*:\s*\n*", "", content, flags=re.IGNORECASE
+        )
+
+        return safe_content
+
+    def _sanitize_mermaid_mindmap(self, content: str) -> str:
+        """
+        Smart sanitizer for Mermaid mindmaps.
+        Respects properly quoted strings and root nodes while brutalizing naked brackets.
+        """
+
+        if (
+            not isinstance(content, str)
+            or "```mermaid" not in content.lower()
+            or "mindmap" not in content.lower()
+        ):
+            return content
+
+        try:
+
+            blocks = re.split(
+                r"(```mermaid\n.*?\n```)", content, flags=re.DOTALL | re.IGNORECASE
+            )
+
+            for i, block in enumerate(blocks):
+
+                if (
+                    block.lower().startswith("```mermaid")
+                    and "mindmap" in block.lower()
+                ):
+                    lines = block.split("\n")
+                    cleaned_lines = []
+
+                    for line in lines:
+                        stripped = line.strip()
+
+                        if (
+                            stripped.lower() in ["```mermaid", "```", "mindmap"]
+                            or not stripped
+                        ):
+                            cleaned_lines.append(line)
+                            continue
+
+                        # Preserve the root node definition exactly as is
+                        if stripped.startswith("root(") or stripped.startswith(
+                            "root(("
+                        ):
+                            cleaned_lines.append(line)
+                            continue
+
+                        # EDGE CASE FIX: If the model protected the text with double quotes,
+                        # Mermaid safely parses any brackets inside. Touching it creates nested quote crashes.
+                        if '"' in stripped:
+                            cleaned_lines.append(line)
+                            continue
+
+                        # Extract indentation to preserve hierarchy
+                        indent = line[: len(line) - len(stripped)]
+
+                        # Bruteforce sterilization for unprotected brackets
+                        safe_text = re.sub(r"[\(\[\{]", ' "', stripped)
+                        safe_text = re.sub(r"[\)\]\}]", '" ', safe_text)
+
+                        # Cleanup formatting
+                        safe_text = re.sub(r"\s+", " ", safe_text).strip()
+
+                        cleaned_lines.append(f"{indent}{safe_text}")
+
+                    blocks[i] = "\n".join(cleaned_lines)
+
+            return "".join(blocks)
+
+        except Exception as e:
+
+            if self.debug:
+                self.debug.log(f"Mindmap Sanitizer Error: {e}")
+
+            return content
+
+    def _sanitize_mermaid_graph(self, content: str) -> str:
+        """
+        Fixes common trailing character hallucinations in graph TD.
+        Example: converts Node["Text"]) into valid Node["Text"].
+        """
+
+        if (
+            not isinstance(content, str)
+            or "```mermaid" not in content.lower()
+            or "graph " not in content.lower()
+        ):
+            return content
+
+        try:
+
+            blocks = re.split(
+                r"(```mermaid\n.*?\n```)", content, flags=re.DOTALL | re.IGNORECASE
+            )
+
+            for i, block in enumerate(blocks):
+
+                if block.lower().startswith("```mermaid") and "graph " in block.lower():
+                    # Fix trailing parenthesis/bracket after a valid node definition
+                    safe_block = re.sub(r'(\["[^"\]]+"\])\)', r"\1", block)
+                    safe_block = re.sub(r'(\("[^"\)]+"\))\]', r"\1", safe_block)
+                    blocks[i] = safe_block
+
+            return "".join(blocks)
+
+        except Exception as e:
+
+            if self.debug:
+                self.debug.log(f"Graph Sanitizer Error: {e}")
+
+            return content
+
+    def _sanitize_output(self, content: str) -> str:
+        """
+        Master pipeline for deterministic output sanitization.
+        Executes all cleaning routines before rendering to the user.
+        """
+
+        if not isinstance(content, str):
+            return content
+
+        content = self._sanitize_text_markers(content)
+        content = self._sanitize_mermaid_mindmap(content)
+        content = self._sanitize_mermaid_graph(content)
+
+        return content
