@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.5
+version: 0.5.6
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -15,11 +15,11 @@ import os
 import re
 import sys
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 # Open WebUI Imports
 from open_webui.main import app  # type: ignore
-from open_webui.models.users import UserModel, Users  # type: ignore
+from open_webui.models.users import Users  # type: ignore
 from open_webui.routers.retrieval import SearchForm, process_web_search  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
 from pydantic import BaseModel, Field, validator

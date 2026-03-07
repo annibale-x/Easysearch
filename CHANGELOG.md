@@ -1,3 +1,7 @@
+* 2026-03-07: v0.5.6 - Code Cleanup (Hannibal)  
+  * Removed unused `UserModel` from imports.
+  * Removed unused `Union` typing from imports.
+
 * 2026-03-07: v0.5.5 - MITM Logic Integration & SoC Refactoring (Hannibal)  
   * Implemented full Man-in-the-Middle (MITM) streaming architecture.
   * Refactored Mermaid sanitizers into a dedicated `MermaidSanitizer` class (SoC).
