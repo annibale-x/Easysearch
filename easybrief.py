@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.12
+version: 0.5.13
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -47,7 +47,6 @@ OVERRIDE_WEB_SEARCH = None  # Set to True/False to override user setting
 AUTO_NANO_BRIEF_COMPRESSION = 0.5
 MAX_CHARS_PER_WEB_RESULT = 10000
 TRACE = True
-SANITIZE_OUTPUT = False
 
 
 # --- PROMPT TEMPLATES ---
@@ -1000,11 +999,13 @@ class DebugService:
             else "{}"
         )
 
+        output_logs = getattr(self.ctx, "output_content", "")
+
         return (
             f"\n\n<details>\n"
             f"<summary>🔍 {APP_NAME} Debug</summary>\n\n"
             f"```json\n{state_json}\n```\n\n"
-            f"{''.join(self.output)}\n"
+            f"{output_logs}\n"
             f"</details>\n"
         )
 
@@ -2330,12 +2331,6 @@ class Filter:
                     last_msg = body["messages"][-1]
                     content = last_msg.get("content", "")
 
-                    # --- THE BRUTEFORCE SANITIZER INJECTION ---
-                    if SANITIZE_OUTPUT and isinstance(content, str):
-                        content = self._sanitize_output(content)
-                        last_msg["content"] = content
-                    # --- END OF SANITIZER ---
-
                     debug_out = self.debug.emit()
 
                     if isinstance(content, str):
@@ -2768,35 +2763,3 @@ class Filter:
                 f"{fallback_instr}\n"
             )
         return system_prompt, user_content
-
-    def _sanitize_text_markers(self, content: str) -> str:
-        """
-        Removes LLM conversational filler and hallucinated labels.
-        Targets markers like '**Visual**:' that pollute the report structure.
-        """
-
-        if not isinstance(content, str):
-            return content
-
-        # Strip bold labels often generated before code blocks
-        safe_content = re.sub(
-            r"\*\*Visuals?\*\*:\s*\n*", "", content, flags=re.IGNORECASE
-        )
-
-        return safe_content
-
-    def _sanitize_output(self, content: str) -> str:
-        """
-        Master pipeline for deterministic output sanitization.
-        Executes all cleaning routines before rendering to the user.
-        """
-
-        if not isinstance(content, str):
-            return content
-
-        content = self._sanitize_text_markers(content)
-        # Note: Mermaid sanitization now handled in the stream function with MITM
-        # content = self._sanitize_mermaid_mindmap(content)
-        # content = self._sanitize_mermaid_graph(content)
-
-        return content

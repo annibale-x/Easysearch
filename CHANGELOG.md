@@ -1,3 +1,7 @@
+* 2026-03-07: v0.5.13 - Legacy Sanitizer Removal & Debug Fix (Hannibal)  
+  * Removed redundant legacy `_sanitize_output` and `_sanitize_text_markers` methods since sanitization is now fully handled in-stream.
+  * Fixed `AttributeError` in `DebugService` caused by referencing a non-existent `output` attribute.
+
 * 2026-03-07: v0.5.12 - Stream Status Completion Fix (Hannibal)  
   * Fixed an issue where the frontend status indicator would hang indefinitely on "Generating..." by passing the correct `__event_emitter__` object to the `outlet` method.
 
