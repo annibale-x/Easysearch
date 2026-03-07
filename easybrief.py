@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.8
+version: 0.5.9
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -1879,7 +1879,11 @@ class Filter:
 
         # Phase 1: Parsing & Validation
         parsed = self._parse_trigger(txt)
+        user_id = __user__.get("id", "default") if __user__ else "default"
+
         if not parsed:
+            if user_id in self.sessions:
+                self.sessions[user_id]["bypass"] = True
             return body
 
         # Phase 2: Initialization
@@ -1889,6 +1893,15 @@ class Filter:
             DebugService(self),
             EmitterService(__event_emitter__, self),
         )
+
+        # Activate MITM Stream Session
+        self.sessions[user_id] = {
+            "full_text": "",
+            "is_inside": False,
+            "buffer": "",
+            "out_buffer": "",
+            "bypass": False,
+        }
 
         if TRACE:
             self.debug.dump(body, "Body")

@@ -1,3 +1,7 @@
+* 2026-03-07: v0.5.9 - MITM Stream Session Activation Fix (Hannibal)  
+  * Fixed a bug where the MITM stream session was bypassed because it was never initialized with `bypass: False` during the `inlet` phase.
+  * Ensures the MITM streaming pipeline is properly activated when EasyBrief is triggered.
+
 * 2026-03-07: v0.5.8 - Generalized Mermaid Hallucination Patch (Hannibal)  
   * Generalized the MITM hallucination patch to dynamically support all Mermaid diagram types (gantt, erDiagram, sequenceDiagram, etc.) beyond just pie, graph, and mindmap.
 
