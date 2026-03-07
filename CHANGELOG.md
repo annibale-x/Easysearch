@@ -1,3 +1,9 @@
+* 2026-03-07: v0.5.5 - MITM Logic Integration & SoC Refactoring (Hannibal)  
+  * Implemented full Man-in-the-Middle (MITM) streaming architecture.
+  * Refactored Mermaid sanitizers into a dedicated `MermaidSanitizer` class (SoC).
+  * Reordered Open WebUI hooks (`inlet`, `stream`, `outlet`) for readability.
+  * Cleaned up obsolete comments and added comprehensive documentation.
+
 * 2026-03-07: v0.5.4 - MITM Logic Pre-integration (Hannibal)  
   * Implemented preliminary framework for Man-in-the-Middle streaming architecture.
   * Integrated Mermaid sanitizer components from mermaid-doctor repository.

@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.3
+version: 0.5.4
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -8,21 +8,21 @@ author_url: https://openwebui.com/u/h4nn1b4l
 description: Transform text and web search results into structured Executive Reports with tables and mindmaps using simple triggers (??, >>, v>, t>).
 """
 
-import os
-import json
-import re
-import time
-import sys
-import datetime
 import asyncio
-from typing import Optional, Any, List, Dict, Tuple, Union
-from pydantic import BaseModel, Field, validator
+import datetime
+import json
+import os
+import re
+import sys
+import time
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Open WebUI Imports
 from open_webui.main import app  # type: ignore
-from open_webui.models.users import Users, UserModel  # type: ignore
-from open_webui.utils.chat import generate_chat_completion  # type: ignore
+from open_webui.models.users import UserModel, Users  # type: ignore
 from open_webui.routers.retrieval import SearchForm, process_web_search  # type: ignore
+from open_webui.utils.chat import generate_chat_completion  # type: ignore
+from pydantic import BaseModel, Field, validator
 
 # Dependencies for Turbo Loader
 try:
@@ -126,7 +126,7 @@ VISUAL_ASSETS = {
     1. Only one root node can exist, e.g., `root((Root node description))`.
     2. Every node except the root MUST be indented with exactly two spaces of indentation. Each subsequent hierarchical level must add exactly two additional spaces (4, 6, 8, etc.).
     3. Use a descriptive label for each line.
-    4. Remove any parentheses from labels text. 
+    4. Remove any parentheses from labels text.
     5. Always specify the code-block type: ```mermaid.
     6. Follow EXACTLY the syntax of the following example:
 
@@ -147,7 +147,7 @@ mindmap
         "rule": "IF sequential process/flow/decision exists → USE Mermaid graph TD. ELSE skip.",
         "syntax": """**Flowcharts**: Mermaid `graph TD`.
     RULES:
-    1. Nodes Syntax: `ID("Text")`, `ID["Text"]`, `ID{"Text"}`. 
+    1. Nodes Syntax: `ID("Text")`, `ID["Text"]`, `ID{"Text"}`.
     2. Node labels must be enclosed in double quotes.
     2. Connectors Label EXACT Syntax: `|"Label"|` (use pipes before and after the label text)
     3. Connectors Syntax: `ID1 -->|"Label"| ID2` (No spaces between pipes and arrows).
@@ -350,7 +350,6 @@ class ShadowRequest:
         self._overrides = overrides
 
         class ConfigProxy:
-
             def __init__(self, real_config, overrides):
                 """Initialize the ConfigProxy."""
 
@@ -365,7 +364,6 @@ class ShadowRequest:
                 return getattr(self._real, name)
 
         class StateProxy:
-
             def __init__(self, real_state, config_proxy):
                 """Initialize the StateProxy."""
 
@@ -380,7 +378,6 @@ class ShadowRequest:
                 return getattr(self._real, name)
 
         class AppProxy:
-
             def __init__(self, real_app, state_proxy):
                 """Initialize the AppProxy."""
 
@@ -574,7 +571,7 @@ class WebSearchHandler:
         Removes common tracking parameters and fragments from the URL to improve deduplication.
         """
 
-        from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
+        from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
         try:
             parsed = urlparse(url)
@@ -969,8 +966,10 @@ class DebugService:
         )
         if not is_debug:
             return
+
+        dump_str = json.dumps(data, indent=2, default=lambda o: str(o))
         print(
-            f"{'—'*60}\n📦 {APP_NAME} {label}:\n{json.dumps(data, indent=2, default=lambda o: str(o))}\n{'—'*60}",
+            f"{'—' * 60}\n📦 {APP_NAME} {label}:\n{dump_str}\n{'—' * 60}",
             file=sys.stderr,
             flush=True,
         )
@@ -996,16 +995,731 @@ class DebugService:
                 for k, v in d.items()
             }
 
+        state_json = (
+            json.dumps(_s(self.ctx.model), indent=2)
+            if self.ctx and hasattr(self.ctx, "model")
+            else "{}"
+        )
+
         return (
-            f"\n\n<details>\n\n"
+            f"\n\n<details>\n"
             f"<summary>🔍 {APP_NAME} Debug</summary>\n\n"
-            f"```json\n{json.dumps(_s(self.ctx.ctx.model), indent=2)}\n```\n\n"
-            f"</details>"
+            f"```json\n{state_json}\n```\n\n"
+            f"{''.join(self.output)}\n"
+            f"</details>\n"
         )
 
 
-class Filter:
+class MermaidSanitizer:
+    """
+    Sanitizes and corrects Mermaid diagrams to ensure valid syntax.
+    Implements the same logic as mermaid-doctor but in a modular component.
+    """
 
+    def _sanitize_mermaid(self, raw_code: str, valves: BaseModel) -> str:
+        """
+        Cleans and enforces Mermaid syntax.
+        Routes to specific sanitizers based on graph type.
+        """
+
+        # Replace non-breaking spaces (\xa0) with standard spaces
+        code = raw_code.replace("\xa0", " ").strip()
+
+        # Eradicate hallucinated task numbers at the start of the block (e.g., "1. graph TD" -> "graph TD")
+        code = re.sub(r"^\s*\d+[\.\)\-]\s*", "", code)
+
+        code_lower = code.lower()
+
+        # Route to specific sanitizers based on graph type
+        if "mindmap" in code_lower:
+            code = self._sterilize_mindmap(code)
+
+        elif "graph " in code_lower:
+            code = self._sterilize_graph(code, valves)
+
+        elif "erdiagram" in code_lower:
+            code = self._sterilize_er(code)
+
+        elif "pie" in code_lower:
+            code = self._sterilize_pie(code)
+
+        elif "gantt" in code_lower:
+            code = self._sterilize_gantt(code)
+
+        return "\n" + code + "\n"
+
+    def _sterilize_gantt(self, block: str) -> str:
+        """
+        Fixes Gantt charts corrupted by micromodels.
+        Completely reassembles Task lines to ensure correct Mermaid parsing logic:
+        [status], [id], [start_date | after id], [duration]
+        """
+
+        lines = block.split("\n")
+        cleaned_lines = []
+
+        # Pass 1: Re-assemble fragmented lines
+        for line in lines:
+            stripped = line.strip()
+
+            # Check if it's a header or metadata line
+            if (
+                not stripped
+                or stripped.lower() in ["```mermaid", "```", "gantt"]
+                or stripped.lower().startswith(
+                    ("title ", "section ", "%%", "dateformat", "axisformat")
+                )
+            ):
+                cleaned_lines.append(line)
+                continue
+
+            # If the line starts with a colon, it's a fragmented task data line
+            if stripped.startswith(":"):
+                # Only append to previous line if it's not a header-type line
+                if cleaned_lines and not cleaned_lines[-1].strip().lower().startswith(
+                    (
+                        "section",
+                        "title",
+                        "gantt",
+                        "```",
+                        "%%",
+                        "dateformat",
+                        "axisformat",
+                    )
+                ):
+                    cleaned_lines[-1] = cleaned_lines[-1] + " " + stripped
+                    continue
+
+            # If the previous line ended with a colon, this line is probably the continuation
+            if cleaned_lines and cleaned_lines[-1].strip().endswith(":"):
+                # Only append to previous line if it's not a header-type line
+                if not stripped.lower().startswith(
+                    (
+                        "section",
+                        "title",
+                        "gantt",
+                        "```",
+                        "%%",
+                        "dateformat",
+                        "axisformat",
+                    )
+                ):
+                    cleaned_lines[-1] = cleaned_lines[-1] + " " + stripped
+                    continue
+
+            cleaned_lines.append(line)
+
+        # Pass 2: Clean up intra-line syntax using a universal re-assembler
+        task_counter = 0
+
+        for i, line in enumerate(cleaned_lines):
+            stripped = line.strip()
+
+            # Skip header lines and empty lines
+            if not stripped or stripped.lower().startswith(
+                ("gantt", "title ", "section ", "```", "%%", "dateformat", "axisformat")
+            ):
+                continue
+
+            # Check for task data lines (lines with colon)
+            if line.count(":") >= 1:
+                parts = line.split(":")
+                title = " - ".join(p.strip() for p in parts[:-1]).strip()
+                data = parts[-1].strip()
+
+                # Eradicate hallucinated 'dur' prefixes
+                data = re.sub(
+                    r"\bdur\s+(\d+[smhdwM])", r"\1", data, flags=re.IGNORECASE
+                )
+
+                # Safe split of data properties
+                if "," not in data:
+                    raw_parts = data.split()
+
+                else:
+                    raw_parts = [p.strip() for p in data.split(",")]
+
+                status_part = None
+                id_part = None
+                start_part = None
+                duration_part = None
+
+                # Dissect and categorize each property
+                for p in raw_parts:
+                    p = p.strip()
+                    p_lower = p.lower()
+
+                    if p_lower in ["active", "done", "crit", "milestone"]:
+                        status_part = p_lower
+
+                    elif re.match(r"^\d+[smhdwM]$", p):
+                        duration_part = p
+
+                    elif re.match(r"^\d{4}-\d{2}-\d{2}$", p):
+                        try:
+                            # Basic validation to prevent hallucinations like 2024-01-33
+                            d_parts = p.split("-")
+
+                            if (
+                                1 <= int(d_parts[1]) <= 12
+                                and 1 <= int(d_parts[2]) <= 31
+                            ):
+                                start_part = p
+
+                        except:
+                            pass
+
+                    elif p_lower.startswith("after"):
+                        if p_lower == "after":
+                            start_part = "after_placeholder"  # Orphaned 'after' caught!
+
+                        else:
+                            start_part = p
+
+                    else:
+                        # Fallback for ID recognition
+                        if not id_part and re.match(r"^[a-zA-Z0-9_]+$", p):
+                            id_part = p
+
+                task_counter += 1
+
+                # Auto-assign missing IDs
+                current_id = id_part if id_part else f"task{task_counter}"
+
+                # Auto-chain missing or orphaned starts
+                if start_part == "after_placeholder" or not start_part:
+                    start_part = (
+                        f"after task{task_counter - 1}"
+                        if task_counter > 1
+                        else "2024-01-01"
+                    )
+
+                # Standardize durations (prevent crashes from empty durations)
+                if not duration_part:
+                    duration_part = "0d" if status_part == "milestone" else "1d"
+
+                # Reassemble strictly in Mermaid Gantt format
+                new_data_parts = []
+
+                if status_part:
+                    new_data_parts.append(status_part)
+
+                new_data_parts.append(current_id)
+                new_data_parts.append(start_part)
+                new_data_parts.append(duration_part)
+
+                new_data = ", ".join(new_data_parts)
+                indent = line[: len(line) - len(line.lstrip())]
+                cleaned_lines[i] = f"{indent}{title} : {new_data}"
+
+        return "\n".join(cleaned_lines)
+
+    def _sterilize_pie(self, block: str) -> str:
+        """
+        Fixes Pie charts corrupted by syntax hallucinations.
+        Converts assignment operators '=' to ':' and extracts labels
+        from hallucinated graph node syntax (e.g., ID[Label] : value).
+        """
+
+        lines = block.split("\n")
+        cleaned_lines = []
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Skip header lines and empty lines
+            if (
+                not stripped
+                or stripped.lower() in ["```mermaid", "```", "pie"]
+                or stripped.lower().startswith("title ")
+            ):
+                cleaned_lines.append(line)
+                continue
+
+            # Process data lines with ':' or '='
+            if ":" in stripped or "=" in stripped:
+                normalized = stripped.replace("=", ":")
+                parts = normalized.split(":", 1)
+                raw_label = parts[0].strip()
+                value = parts[1].strip()
+
+                # Extract label from node syntax (ID[Label])
+                node_match = re.match(
+                    r'^[A-Za-z0-9_]*\s*[\[\(]\s*"?([^"\]\)]+)"?\s*[\]\)]$', raw_label
+                )
+
+                if node_match:
+                    raw_label = node_match.group(1).strip()
+
+                raw_label = raw_label.strip("\"'")
+
+                indent = line[: len(line) - len(line.lstrip())]
+                line = f'{indent}"{raw_label}" : {value}'
+
+            cleaned_lines.append(line)
+
+        return "\n".join(cleaned_lines)
+
+    def _sterilize_er(self, block: str) -> str:
+        """
+        Fixes ER diagrams corrupted by 'graph' syntax hallucinations,
+        UML class syntax hallucinations, glued relationships, and relationships
+        hallucinated inside attribute blocks.
+        """
+
+        lines = block.split("\n")
+        cleaned_lines = []
+        in_entity_block = False
+
+        for line in lines:
+            stripped = line.strip()
+            lower_stripped = stripped.lower()
+
+            # Skip header lines and empty lines
+            if (
+                not stripped
+                or lower_stripped in ["```mermaid", "```"]
+                or lower_stripped.startswith("title ")
+                or lower_stripped.startswith("%%")
+            ):
+                cleaned_lines.append(line)
+                continue
+
+            # Force strict normalization of the ER diagram declaration line
+            if lower_stripped.startswith("erdiagram"):
+                cleaned_lines.append("erDiagram")
+                continue
+
+            # Fix hallucinated sequence/flowchart AND UML inheritance arrows (e.g. -->>, ->, ---|>)
+            line = re.sub(
+                r"([A-Za-z0-9_]+)\s*(?:-->>|-->|->|-\.>|\.\.>|=>|==>|-{1,3}\|>)\s*([A-Za-z0-9_]+)",
+                r"\1 ||--o{ \2",
+                line,
+            )
+
+            # Fix hallucinated mixed-line relations (e.g. ||--|..|) containing both solid and dashed elements
+            line = re.sub(
+                r"([A-Za-z0-9_]+)\s*(?:[\}o\|]*--[\}o\|]*\.\.[\}o\|]*|[\}o\|]*\.\.[\}o\|]*--[\}o\|]*)\s*([A-Za-z0-9_]+)",
+                r"\1 ||--o{ \2",
+                line,
+            )
+
+            is_relationship = bool(re.search(r"[\}o\|]*(?:--|\.\.)[o\|\{]*", line))
+
+            # Process relationships
+            if is_relationship:
+                # Close entity block if needed
+                if in_entity_block:
+                    indent = line[: len(line) - len(line.lstrip())]
+                    cleaned_lines.append(indent + "}")
+                    in_entity_block = False
+
+                def _clean_entity(match):
+                    """
+                    Cleans entity name by replacing spaces with underscores.
+                    """
+
+                    entity_name = match.group(2)
+                    return re.sub(r"\s+", "_", entity_name.strip())
+
+                line = re.sub(
+                    r'([A-Za-z0-9_]+)\s*[\[\(]\s*"?([^"\]\)]+)"?[\]\)]?',
+                    _clean_entity,
+                    line,
+                )
+
+                line = re.sub(r"([\}o\|]+)\s*(--|\.\.)\s*([o\|\{]+)", r"\1\2\3", line)
+
+                # Extended fix for hallucinated extra pipes and hybrid cardinalities
+                for bad, good in [
+                    ("}||", "}|"),
+                    ("||{", "|{"),
+                    ("}o|", "}o"),
+                    ("|o{", "o{"),
+                    ("o|{", "o{"),
+                    ("}|o", "}o"),
+                    ("o||", "o|"),
+                    ("||o", "|o"),
+                ]:
+                    line = line.replace(bad, good)
+
+                line = re.sub(
+                    r"([A-Za-z0-9_]+)\s*([\}o\|]*(?:--|\.\.)[o\|\{]*)\s*([A-Za-z0-9_]+)",
+                    r"\1 \2 \3",
+                    line,
+                )
+
+                # Fix unquoted relationship labels with spaces or force missing labels
+                if ":" not in line:
+                    line = line.rstrip() + " : relates_to"
+
+                else:
+                    parts = line.split(":", 1)
+                    rel_label = parts[1].strip().strip("\"'")
+                    rel_label = re.sub(r"\s+", "_", rel_label)
+
+                    if not rel_label:
+                        rel_label = "relates_to"
+
+                    line = f"{parts[0].rstrip()} : {rel_label}"
+
+                cleaned_lines.append(line)
+                continue
+
+            # Process entity blocks
+            if "{" in stripped:
+                in_entity_block = True
+
+            is_closing = "}" in stripped
+
+            # Process entity attributes
+            if in_entity_block and "{" not in stripped and not is_closing:
+                # Skip relationship-like lines
+                if any(
+                    x in lower_stripped
+                    for x in ["one-to-", "many-to-", "1:n", "n:m", "1:1", "->", "<-"]
+                ):
+                    continue
+
+                # Process attribute definitions
+                if ":" in stripped:
+                    m = re.match(
+                        r"^(\s*)([a-zA-Z0-9_]+)\s*:\s*([a-zA-Z0-9_]+)\s*$", line
+                    )
+
+                    if m:
+                        line = f"{m.group(1)}{m.group(3)} {m.group(2)}"
+                    else:
+                        continue
+
+                # Remove leading signs (+, -, ~)
+                line = re.sub(r"^(\s*)[\+\-\~]\s*", r"\1", line)
+
+                # Fix reversed attribute format
+                line = re.sub(
+                    r"^(\s*)([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*$", r"\1\3 \2", line
+                )
+
+                cleaned_lines.append(line)
+
+                if is_closing:
+                    in_entity_block = False
+
+                continue
+
+            # Handle closing braces
+            if is_closing:
+                in_entity_block = False
+
+            # Process title lines
+            title_match = re.match(
+                r'^[A-Za-z0-9_]*\s*[\[\(]\s*"?([^"\]\)]+)"?[\]\)]?$', stripped
+            )
+
+            if title_match:
+                cleaned_lines.append(f'title "{title_match.group(1).strip()}"')
+                continue
+
+            cleaned_lines.append(line)
+
+        # Close any open entity blocks
+        if in_entity_block:
+            cleaned_lines.append("}")
+
+        return "\n".join(cleaned_lines)
+
+    def _sterilize_mindmap(self, block: str) -> str:
+        """
+        Smart sanitizer for Mermaid mindmaps.
+        """
+
+        lines = block.split("\n")
+        cleaned_lines = []
+
+        for line in lines:
+            stripped = line.strip()
+            lower_stripped = stripped.lower()
+
+            # Skip header lines
+            if lower_stripped in ["```mermaid", "```"] or not stripped:
+                cleaned_lines.append(line)
+                continue
+
+            # Process mindmap declaration
+            if lower_stripped.startswith("mindmap"):
+                cleaned_lines.append("mindmap")
+                continue
+
+            # Process root nodes
+            if stripped.startswith("root(") or stripped.startswith("root(("):
+                cleaned_lines.append(line)
+                continue
+
+            indent = line[: len(line) - len(stripped)]
+            safe_text = re.sub(r"^(?:[\|\+\-\*\>]\s*)+", "", stripped)
+
+            # Skip empty lines
+            if not safe_text:
+                continue
+
+            # Clean text from markdown formatting
+            safe_text = re.sub(r"(\*\*|__|\*)", "", safe_text)
+            safe_text = safe_text.replace('"', "")
+            safe_text = re.sub(r"[\(\[\{]", ' "', safe_text)
+            safe_text = re.sub(r"[\)\]\}]", '" ', safe_text)
+            safe_text = re.sub(r'("\s*")+', '"', safe_text)
+            safe_text = re.sub(r"\s+", " ", safe_text).strip()
+
+            cleaned_lines.append(f"{indent}{safe_text}")
+
+        data_lines_info = []
+
+        for i, line in enumerate(cleaned_lines):
+            stripped = line.strip()
+
+            if stripped and stripped.lower() not in ["```mermaid", "```", "mindmap"]:
+                indent_len = len(line) - len(stripped)
+                data_lines_info.append((i, indent_len))
+
+        # Process root handling for multiple root nodes
+        if data_lines_info:
+            min_indent = min(info[1] for info in data_lines_info)
+            root_count = sum(1 for info in data_lines_info if info[1] == min_indent)
+
+            if root_count > 1:
+                first_idx = data_lines_info[0][0]
+                master_indent = " " * max(0, min_indent - 2)
+                cleaned_lines.insert(first_idx, f"{master_indent}root((Core Concept))")
+
+                for i in range(first_idx + 1, len(cleaned_lines)):
+                    line = cleaned_lines[i]
+                    stripped = line.strip()
+
+                    if stripped and stripped.lower() not in [
+                        "```mermaid",
+                        "```",
+                        "mindmap",
+                    ]:
+                        cleaned_lines[i] = "  " + line
+
+        return "\n".join(cleaned_lines)
+
+    def _sterilize_graph(self, block: str, valves: BaseModel) -> str:
+        """
+        Fixes common trailing character hallucinations, space-in-ID issues,
+        naked quoted nodes, and style stripping.
+        """
+
+        block = re.sub(
+            r'graph_([a-zA-Z]{2})\s*\[\s*[\'"]graph\s+[a-zA-Z]{2}[\'"]\s*\]',
+            r"graph \1",
+            block,
+            flags=re.IGNORECASE,
+        )
+
+        safe_block = re.sub(r'(\["[^"\]]+"\])\)', r"\1", block)
+        safe_block = re.sub(r'(\("[^"\)]+"\))\]', r"\1", safe_block)
+
+        safe_block = re.sub(
+            r'-->\s*\|\s*"?([^|\]"]+)"?\s*\]',
+            lambda m: (
+                f'-->NODE_{re.sub(r"[^a-zA-Z0-9]", "", m.group(1))[:10]}["{m.group(1)}"]'
+            ),
+            safe_block,
+        )
+
+        lines = safe_block.split("\n")
+        cleaned_lines = []
+        reserved_keywords = {
+            "end",
+            "subgraph",
+            "click",
+            "style",
+            "class",
+            "classdef",
+            "linkstyle",
+        }
+
+        def _clean_node_part(work_part: str) -> str:
+            """
+            Cleans individual node definitions within a graph, standardizing syntax and quotes.
+            """
+
+            work_part = work_part.strip()
+            work_part = re.sub(r"(\*\*|__|\*)", "", work_part)
+
+            for opener, closer in [("[", "]"), ("(", ")"), ("{", "}")]:
+                if work_part.endswith(closer) and opener not in work_part:
+                    work_part = work_part[:-1].strip()
+
+            # Handle quoted nodes with internal text
+            if (
+                work_part.startswith('"')
+                and work_part.endswith('"')
+                and len(work_part) > 1
+            ):
+                inner_text = work_part[1:-1].strip()
+                safe_gen_id = "N_" + re.sub(r"[^a-zA-Z0-9]", "", inner_text)[:10]
+                return f'{safe_gen_id}["{inner_text}"]'
+
+            node_match = re.match(r"^([^\[\(\{\>]+?)\s*([\[\(\{\>].*)?$", work_part)
+
+            if node_match:
+                raw_id = node_match.group(1).strip()
+                label_block = node_match.group(2) or ""
+
+                # Handle bracketed label blocks
+                if label_block:
+                    opener = label_block[0]
+                    bracket_map = {"[": "]", "(": ")", "{": "}", ">": "]"}
+
+                    if opener in bracket_map:
+                        expected_closer = bracket_map[opener]
+
+                        if not label_block.endswith(expected_closer):
+                            label_block = (
+                                label_block.rstrip(")]}\"' ") + expected_closer
+                            )
+
+                    # Enforce quotes around inner text to prevent Mermaid parser crashes on '()' or extra spaces
+                    shape_match = re.match(
+                        r"^([\[\(\{\>]+[\/\\]?)\s*[\"']?(.*?)[\"']?\s*([\/\\]?[\]\)\}]+)$",
+                        label_block,
+                    )
+
+                    if shape_match:
+                        open_sym = shape_match.group(1)
+                        inner_txt = shape_match.group(2).replace('"', "'")
+                        close_sym = shape_match.group(3)
+                        label_block = f'{open_sym}"{inner_txt}"{close_sym}'
+
+                # Handle space-separated IDs
+                if not label_block and " " in raw_id:
+                    safe_id = re.sub(r"[^a-zA-Z0-9_]", "", re.sub(r"\s+", "_", raw_id))
+
+                    if safe_id.lower() in reserved_keywords:
+                        safe_id = f"ID_{safe_id}"
+
+                    if not safe_id:
+                        safe_id = "NODE"
+
+                    return f'{safe_id}["{raw_id}"]'
+
+                raw_id = raw_id.replace('"', "")
+                safe_id = re.sub(r"\s+", "_", raw_id)
+                safe_id = re.sub(r"[^a-zA-Z0-9_]", "", safe_id)
+
+                if not safe_id:
+                    safe_id = "NODE"
+
+                if safe_id.lower() in reserved_keywords:
+                    safe_id = f"ID_{safe_id}"
+
+                return safe_id + label_block
+
+            return work_part
+
+        for line in lines:
+            stripped = line.strip()
+            lower_stripped = stripped.lower()
+
+            # Skip header and empty lines
+            if (
+                not stripped
+                or lower_stripped in ["```mermaid", "```"]
+                or lower_stripped.startswith("graph ")
+                or lower_stripped.startswith("%%")
+            ):
+                cleaned_lines.append(line)
+                continue
+
+            is_style_line = lower_stripped.startswith(
+                ("style ", "classdef ", "click ", "linkstyle ", "class ")
+            )
+
+            # Process style lines based on valves configuration
+            if is_style_line:
+                # If strip_styles is enabled, skip styles (same as MD)
+                if getattr(valves, "strip_styles", True):
+                    continue
+
+                else:
+                    cleaned_lines.append(line)
+                    continue
+
+            # Process subgraph declarations and end statements
+            if lower_stripped.startswith("subgraph ") or lower_stripped == "end":
+                cleaned_lines.append(line)
+                continue
+
+            leading_spaces = line[: len(line) - len(line.lstrip())]
+
+            # Process edge lines with -->
+            if "-->" in line:
+                parts = line.split("-->")
+                new_parts = []
+
+                for i, part in enumerate(parts):
+                    work_part = part.strip()
+                    has_semi = work_part.endswith(";")
+
+                    if has_semi:
+                        work_part = work_part[:-1].strip()
+
+                    edge_label = ""
+                    m1 = re.match(r'^\|\s*"([^"]+)"\s*\|?(.*)', work_part)
+                    m2 = re.match(r"^\|([^|]+)\|(.*)", work_part)
+
+                    if m1:
+                        clean_inner = m1.group(1).strip()
+
+                        if clean_inner:
+                            clean_inner = re.sub(r"(\*\*|__|\*)", "", clean_inner)
+                            edge_label = f'|"{clean_inner}"|'
+
+                        work_part = m1.group(2).strip()
+
+                    elif m2:
+                        clean_inner = m2.group(1).strip()
+
+                        if clean_inner:
+                            clean_inner = re.sub(r"(\*\*|__|\*)", "", clean_inner)
+                            edge_label = f'|"{clean_inner}"|'
+
+                        work_part = m2.group(2).strip()
+
+                    cleaned_node = _clean_node_part(work_part)
+                    reconstructed = edge_label + cleaned_node
+
+                    if has_semi and i == len(parts) - 1:
+                        reconstructed += ";"
+
+                    if i == 0:
+                        new_parts.append(leading_spaces + reconstructed)
+
+                    else:
+                        new_parts.append(reconstructed)
+
+                cleaned_lines.append("-->".join(new_parts))
+
+            # Process node lines (not edge lines)
+            else:
+                has_semi = stripped.endswith(";")
+                work_part = stripped[:-1].strip() if has_semi else stripped
+                cleaned_node = _clean_node_part(work_part)
+
+                if has_semi:
+                    cleaned_node += ";"
+
+                cleaned_lines.append(leading_spaces + cleaned_node)
+
+        return "\n".join(cleaned_lines)
+
+
+# --- END MERMAID SANITIZER CLASS ---
+
+
+class Filter:
     class Valves(BaseModel):
         search_prefix: str = Field(
             default="?",
@@ -1114,10 +1828,410 @@ class Filter:
             return v
 
     def __init__(self):
-        """Initialize the Filter with default valves and state."""
+        """
+        Initialize the Filter with default valves and state.
+        """
+
         self.valves, self.user_valves = self.Valves(), self.UserValves()
+        self.sessions = {}
+        self.mermaid_sanitizer = MermaidSanitizer()
         self.request = self.debug = self.net = self.em = self.ctx = None
         self.output_content = ""
+
+    async def inlet(
+        self,
+        body: dict,
+        __user__: dict = None,  # type: ignore
+        __event_emitter__: callable = None,  # type: ignore
+        __request__=None,
+    ) -> dict:
+        """
+        Process the incoming request and trigger filter logic.
+        """
+
+        self.ctx = None
+
+        # Phase 0: Early User Config Load (Required for Dynamic Triggers)
+        self.request = __request__
+        uv_data = __user__.get("valves", {}) if __user__ else {}
+        self.user_valves = (
+            self.UserValves(**uv_data) if isinstance(uv_data, dict) else uv_data
+        )
+
+        msg_list = body.get("messages", [])
+        if not msg_list:
+            return body
+
+        # Handles multimodal text extraction (e.g. images + text) to prevent list attribute errors
+        last_msg = msg_list[-1].get("content", "")
+        if isinstance(last_msg, list):
+            # Join all text parts found in the list (skips images)
+            txt = "\n".join(
+                [
+                    str(part.get("text", ""))
+                    for part in last_msg
+                    if isinstance(part, dict) and part.get("type") == "text"
+                ]
+            )
+        else:
+            # Handle standard string content
+            txt = str(last_msg)
+        txt = txt.strip()
+
+        # Phase 1: Parsing & Validation
+        parsed = self._parse_trigger(txt)
+        if not parsed:
+            return body
+
+        # Phase 2: Initialization
+        self.output_content = ""
+        self.ctx = ConfigService(self)
+        self.debug, self.em = (
+            DebugService(self),
+            EmitterService(__event_emitter__, self),
+        )
+
+        if TRACE:
+            self.debug.dump(body, "Body")
+
+        await self.em.emit_status("EasyBrief initialized", False)
+
+        # Phase 3: State Management
+        self.ctx.model.web_search_original = body.get("features", {}).get(
+            "web_search", False
+        )
+        self.ctx.model.forced_language = parsed["lang"]
+        self.ctx.model.is_brief = parsed["is_brief"]
+        content = parsed["content"]
+
+        # Phase 4: Context Resolution
+        if not content and len(msg_list) > 1:
+            prev_content = msg_list[-2].get("content", "")
+            content = (
+                prev_content[0].get("text", "")
+                if isinstance(prev_content, list)
+                else str(prev_content)
+            )
+            self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
+            if parsed["is_search"]:
+                await self.em.emit_status("Extracting query...", False)
+                content = await self._extract_query(
+                    content, body.get("model"), __user__["id"], parsed["lang"]
+                )
+                self.debug.log(f"Extracted Query: {content}")
+                await self.em.emit_status(f"Searching: {content[:60]}...", False)
+
+        # Phase 5: Threshold Check (Anti-Spam)
+        min_threshold = self.valves.min_input_threshold
+        if (
+            parsed["is_brief"]
+            and not parsed["is_search"]
+            and len(content.split()) < min_threshold
+        ):
+            self.debug.log(
+                f"Skipping Brief: content too short ({len(content.split())} < {min_threshold} words)."
+            )
+            await self.em.emit_status("Input too short for Brief", True)
+            if body["messages"]:
+                body["messages"][-1]["content"] = content
+            return body
+
+        self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
+
+        try:
+            # Phase 5.5: Pre-Search Injection (Architecture A)
+            if parsed["is_search"]:
+                # Initialize Portable Handler with unified configuration model
+                search_handler = WebSearchHandler(
+                    self.request, __user__["id"], self.em, self.ctx.model, self.debug
+                )
+
+                # Execute Search Cycle (Generate -> Search -> Process)
+                search_context = await search_handler.search(
+                    content, body.get("model"), self.user_valves.max_search_queries
+                )
+
+                if search_context:
+                    # Update Content & Disable Features for Main Request
+                    content = search_context
+                    if "features" not in body:
+                        body["features"] = {}
+                    body["features"]["web_search"] = False
+                    body["features"]["memory"] = False
+                    # Treat as Local Brief now
+                    parsed["is_search"] = False
+
+            # --- DEBUG PROBE ---
+            if TRACE:
+                self.debug.log(f"PROBE: parsed['is_search'] = {parsed['is_search']}")
+                self.debug.log(
+                    f"PROBE: features.web_search = {body.get('features', {}).get('web_search')}"
+                )
+                self.debug.log(f"PROBE: content length = {len(content)}")
+                self.debug.dump(content[:500], "PROBE: Content Preview")
+
+            # Phase 6: Model Configuration
+            self.ctx.model.override_web_search = parsed["is_search"]
+            lang_instruction = self._get_language_instruction(parsed["lang"])
+
+            if parsed["is_brief"]:
+                # Model Swapping Logic
+                target_model = self.user_valves.task_model
+                current_model = body.get("model")
+                if target_model and target_model != current_model:
+                    self.debug.log(f"Swapping model: {current_model} -> {target_model}")
+                    self.ctx.model.original_model = current_model
+                    body["model"] = target_model
+
+                # Brief Generation Logic
+                mode, target_len, status_msg = self._resolve_brief_mode(content, parsed)
+                await self.em.emit_status(status_msg, False)
+
+                model_input = body.get("metadata", {}).get("model") or body.get("model")
+                selected_prompt = self._get_prompt_template(
+                    mode, target_len, lang_instruction, model_input
+                )
+
+                # Split System and User messages for Llama 3 stability
+                sys_prompt, user_data = self._construct_final_message(
+                    selected_prompt, content, parsed["is_search"], parsed["lang"]
+                )
+
+                # Apply Model Parameters (Bias-Free Config)
+                body["temperature"] = self.user_valves.temperature
+                body["top_p"] = self.user_valves.top_p
+                # body["top_k"] = 30
+                # body["repeat_penalty"] = 1.0
+                # body["frequency_penalty"] = 0.0
+
+                # Enforces strict [System, User] structure to prevent context leakage
+                body["messages"] = [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_data},
+                ]
+                self.debug.log("History wiped & Structure enforced: [System, User]")
+                self.debug.log(
+                    f"Model options: temperature:{body['temperature']}|top_p:{body['top_p']}|repeat_penalty:1|frequency_penalty:0"
+                )
+
+            else:
+                # Search Only Logic (??)
+                simple_lang_instr = (
+                    f"*** REQUIRED OUTPUT LANGUAGE: {parsed['lang'].upper()} ***"
+                    if parsed["lang"]
+                    else "DETECT and match the input language."
+                )
+                instr = (
+                    f"Search Query: {content}\n\n"
+                    f"INSTRUCTION: Answer the query above using ONLY the provided search results/context. "
+                    f"Do not hallucinate or use prior conversation memory if unrelated.\n\n"
+                    f"{simple_lang_instr}"
+                )
+                # Search mode keeps single user message for now (less critical)
+                body["messages"] = [{"role": "user", "content": instr}]
+
+            # Phase 7: Apply Features
+            if self.ctx.model.override_web_search is not None:
+                if "features" not in body:
+                    body["features"] = {}
+                body["features"]["web_search"] = self.ctx.model.override_web_search
+
+            self.ctx.model.executed = True
+            self.debug.log(
+                f"Execution Mode: {'Search' if parsed['is_search'] else 'Brief'} | Lang: {parsed['lang'] or 'Auto'}"
+            )
+
+        except Exception as e:
+            await self.debug.error(e)
+
+        return body
+
+    async def stream(self, event: dict, __user__: Optional[dict] = None) -> dict:
+        """
+        Man-in-the-Middle implementation for real-time Mermaid sanitization.
+        Uses buffering and streaming to correct diagram syntax errors on-the-fly.
+        """
+
+        # Safely retrieve UserValves
+        uv_data = __user__.get("valves", {}) if __user__ else {}
+        valves = self.UserValves(**uv_data) if isinstance(uv_data, dict) else uv_data
+
+        user_id = __user__.get("id", "default") if __user__ else "default"
+
+        # Setup safety session - same pattern as mermaid-doctor
+        if user_id not in self.sessions:
+            self.sessions[user_id] = {
+                "full_text": "",
+                "is_inside": False,
+                "buffer": "",
+                "out_buffer": "",
+                "bypass": True,
+            }
+
+        session = self.sessions[user_id]
+
+        # O(1) Non-invasive passthrough if bypass is active
+        if session["bypass"]:
+            return event
+
+        choices = event.get("choices", [])
+
+        if not choices:
+            return event
+
+        content = choices[0].get("delta", {}).get("content", "")
+
+        if not content:
+            return event
+
+        # 1. Update the global response memory
+        session["full_text"] += content
+
+        # --- STATE TRANSITION MANAGEMENT ---
+        if session["is_inside"]:
+            session["buffer"] += content
+
+            # Check if we exited the block
+            if "```" in session["buffer"]:
+                session["is_inside"] = False
+
+                parts = session["buffer"].split("```", 1)
+                raw_mermaid = parts[0]
+                remainder = parts[1] if len(parts) > 1 else ""
+
+                # Use dedicated MermaidSanitizer for sanitization
+                sanitized = self.mermaid_sanitizer._sanitize_mermaid(
+                    raw_mermaid, valves
+                )
+
+                # Check if the code was actually changed by the Doctor
+                # We strip newlines/spaces for a fair comparison of the core logic
+                if sanitized.strip() != raw_mermaid.strip():
+                    sanitized = (
+                        "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n" + sanitized
+                    )
+
+                event["choices"][0]["delta"]["content"] = sanitized + "\n```\n"
+
+                session["buffer"] = ""
+                session["out_buffer"] = remainder
+
+            else:
+                # Block is still open, suppress content (to be replaced by sanitized version)
+                event["choices"][0]["delta"]["content"] = ""
+
+        else:
+            session["out_buffer"] += content
+            lower_out = session["out_buffer"].lower()
+
+            # TRANSITION A: Entering a Mermaid block
+            if "```mermaid" in lower_out:
+                idx = lower_out.find("```mermaid")
+                before_mermaid = session["out_buffer"][:idx]
+                mermaid_tag = session["out_buffer"][idx : idx + 10]
+                after_mermaid = session["out_buffer"][idx + 10 :]
+
+                global_before = session["full_text"][
+                    : -len(session["out_buffer"]) + idx
+                ]
+
+                # Validate if it's a true block-level tag (starts at the beginning of a line, or after a markdown list marker)
+                line_prefix = (
+                    global_before.split("\n")[-1]
+                    if "\n" in global_before
+                    else global_before
+                )
+
+                # Allow empty lines or lines with just markdown list markers (e.g., "1. ", "- ", "* ")
+                is_valid_block_start = re.match(
+                    r"^\s*(?:\d+[\.\)]|[\-\*\+])?\s*$", line_prefix
+                )
+
+                # Genuine block: start interception
+                if is_valid_block_start:
+                    # Genuine block: start interception
+                    session["is_inside"] = True
+
+                    event["choices"][0]["delta"]["content"] = (
+                        before_mermaid + mermaid_tag + "\n"
+                    )
+
+                    session["out_buffer"] = ""
+                    session["buffer"] = after_mermaid
+
+                # It's an inline mention (e.g. conversational text). Let it pass cleanly!
+                else:
+                    event["choices"][0]["delta"]["content"] = (
+                        before_mermaid + mermaid_tag
+                    )
+                    session["out_buffer"] = after_mermaid
+
+            # Still outside, hold back the pre-buffer window to avoid un-curable leaks
+            elif len(session["out_buffer"]) > 15:
+                safe_chunk = session["out_buffer"][:-15]
+                session["out_buffer"] = session["out_buffer"][-15:]
+                event["choices"][0]["delta"]["content"] = safe_chunk
+
+            else:
+                # Pre-buffer window too small, suppress content
+                event["choices"][0]["delta"]["content"] = ""
+
+        return event
+
+    async def outlet(
+        self,
+        body: dict,
+        __user__: dict = None,
+        __event_emitter__=None,  # type: ignore
+    ) -> dict:
+        """
+        Process the outgoing response and restore web search state.
+        """
+
+        try:
+            if self.ctx and self.ctx.model.executed:
+                # Restore original model if it was swapped
+                if self.ctx.model.original_model:
+                    body["model"] = self.ctx.model.original_model
+
+                if "features" in body:
+                    body["features"]["web_search"] = self.ctx.model.web_search_original
+
+                # Handle Output & Debug
+                if "messages" in body and len(body["messages"]) > 0:
+                    last_msg = body["messages"][-1]
+                    content = last_msg.get("content", "")
+
+                    # --- THE BRUTEFORCE SANITIZER INJECTION ---
+                    if SANITIZE_OUTPUT and isinstance(content, str):
+                        content = self._sanitize_output(content)
+                        last_msg["content"] = content
+                    # --- END OF SANITIZER ---
+
+                    debug_out = self.debug.emit()
+
+                    if isinstance(content, str):
+                        last_msg["content"] += debug_out
+                    elif isinstance(content, list) and debug_out:
+                        content.append({"type": "text", "text": debug_out})
+                        last_msg["content"] = content
+
+                self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
+
+                # Minimal completion status
+                await self.em.emit_status("EasyBrief completed", True)
+
+        except Exception as e:
+            # Safety net for outlet errors
+            print(f"EasyBrief Outlet Error: {e}")
+
+        finally:
+            # Prevent State Leaking
+            # Reset context to ensure subsequent requests (like Title Generation)
+            # do not trigger this logic again using stale data.
+            self.ctx = None
+
+        return body
 
     def _parse_trigger(self, txt: str) -> Optional[dict]:
         """
@@ -1265,11 +2379,7 @@ class Filter:
                 f"Translate content to {target_lang}. Use {target_lang} for the key takeaways too."
             )
         else:
-            return (
-                f"{silence}\n"
-                f"DETECT input language.\n"
-                f"Respond in the SAME language."
-            )
+            return f"{silence}\nDETECT input language.\nRespond in the SAME language."
 
     def _resolve_brief_mode(
         self, content: str, parsed: dict
@@ -1528,260 +2638,6 @@ class Filter:
             )
         return system_prompt, user_content
 
-    async def inlet(
-        self,
-        body: dict,
-        __user__: dict = None,  # type: ignore
-        __event_emitter__: callable = None,  # type: ignore
-        __request__=None,
-    ) -> dict:
-        """Process the incoming request and trigger filter logic."""
-        self.ctx = None
-
-        # Phase 0: Early User Config Load (Required for Dynamic Triggers)
-        self.request = __request__
-        uv_data = __user__.get("valves", {}) if __user__ else {}
-        self.user_valves = (
-            self.UserValves(**uv_data) if isinstance(uv_data, dict) else uv_data
-        )
-
-        msg_list = body.get("messages", [])
-        if not msg_list:
-            return body
-
-        # Handles multimodal text extraction (e.g. images + text) to prevent list attribute errors
-        last_msg = msg_list[-1].get("content", "")
-        if isinstance(last_msg, list):
-            # Join all text parts found in the list (skips images)
-            txt = "\n".join(
-                [
-                    str(part.get("text", ""))
-                    for part in last_msg
-                    if isinstance(part, dict) and part.get("type") == "text"
-                ]
-            )
-        else:
-            # Handle standard string content
-            txt = str(last_msg)
-        txt = txt.strip()
-
-        # Phase 1: Parsing & Validation
-        parsed = self._parse_trigger(txt)
-        if not parsed:
-            return body
-
-        # Phase 2: Initialization
-        self.output_content = ""
-        self.ctx = ConfigService(self)
-        self.debug, self.em = (
-            DebugService(self),
-            EmitterService(__event_emitter__, self),
-        )
-
-        if TRACE:
-            self.debug.dump(body, "Body")
-
-        await self.em.emit_status("EasyBrief initialized", False)
-
-        # Phase 3: State Management
-        self.ctx.model.web_search_original = body.get("features", {}).get(
-            "web_search", False
-        )
-        self.ctx.model.forced_language = parsed["lang"]
-        self.ctx.model.is_brief = parsed["is_brief"]
-        content = parsed["content"]
-
-        # Phase 4: Context Resolution
-        if not content and len(msg_list) > 1:
-            prev_content = msg_list[-2].get("content", "")
-            content = (
-                prev_content[0].get("text", "")
-                if isinstance(prev_content, list)
-                else str(prev_content)
-            )
-            self.debug.log(f"Empty trigger detected. Using context: {content[:50]}...")
-            if parsed["is_search"]:
-                await self.em.emit_status("Extracting query...", False)
-                content = await self._extract_query(
-                    content, body.get("model"), __user__["id"], parsed["lang"]
-                )
-                self.debug.log(f"Extracted Query: {content}")
-                await self.em.emit_status(f"Searching: {content[:60]}...", False)
-
-        # Phase 5: Threshold Check (Anti-Spam)
-        min_threshold = self.valves.min_input_threshold
-        if (
-            parsed["is_brief"]
-            and not parsed["is_search"]
-            and len(content.split()) < min_threshold
-        ):
-            self.debug.log(
-                f"Skipping Brief: content too short ({len(content.split())} < {min_threshold} words)."
-            )
-            await self.em.emit_status("Input too short for Brief", True)
-            if body["messages"]:
-                body["messages"][-1]["content"] = content
-            return body
-
-        self.ctx.model.user_query, self.ctx.model.id = content, body.get("model")
-
-        try:
-            # Phase 5.5: Pre-Search Injection (Architecture A)
-            if parsed["is_search"]:
-                # Initialize Portable Handler with unified configuration model
-                search_handler = WebSearchHandler(
-                    self.request, __user__["id"], self.em, self.ctx.model, self.debug
-                )
-
-                # Execute Search Cycle (Generate -> Search -> Process)
-                search_context = await search_handler.search(
-                    content, body.get("model"), self.user_valves.max_search_queries
-                )
-
-                if search_context:
-                    # Update Content & Disable Features for Main Request
-                    content = search_context
-                    if "features" not in body:
-                        body["features"] = {}
-                    body["features"]["web_search"] = False
-                    body["features"]["memory"] = False
-                    # Treat as Local Brief now
-                    parsed["is_search"] = False
-
-            # --- DEBUG PROBE ---
-            if TRACE:
-                self.debug.log(f"PROBE: parsed['is_search'] = {parsed['is_search']}")
-                self.debug.log(
-                    f"PROBE: features.web_search = {body.get('features', {}).get('web_search')}"
-                )
-                self.debug.log(f"PROBE: content length = {len(content)}")
-                self.debug.dump(content[:500], "PROBE: Content Preview")
-
-            # Phase 6: Model Configuration
-            self.ctx.model.override_web_search = parsed["is_search"]
-            lang_instruction = self._get_language_instruction(parsed["lang"])
-
-            if parsed["is_brief"]:
-                # Model Swapping Logic
-                target_model = self.user_valves.task_model
-                current_model = body.get("model")
-                if target_model and target_model != current_model:
-                    self.debug.log(f"Swapping model: {current_model} -> {target_model}")
-                    self.ctx.model.original_model = current_model
-                    body["model"] = target_model
-
-                # Brief Generation Logic
-                mode, target_len, status_msg = self._resolve_brief_mode(content, parsed)
-                await self.em.emit_status(status_msg, False)
-
-                model_input = body.get("metadata", {}).get("model") or body.get("model")
-                selected_prompt = self._get_prompt_template(
-                    mode, target_len, lang_instruction, model_input
-                )
-
-                # Split System and User messages for Llama 3 stability
-                sys_prompt, user_data = self._construct_final_message(
-                    selected_prompt, content, parsed["is_search"], parsed["lang"]
-                )
-
-                # Apply Model Parameters (Bias-Free Config)
-                body["temperature"] = self.user_valves.temperature
-                body["top_p"] = self.user_valves.top_p
-                # body["top_k"] = 30
-                # body["repeat_penalty"] = 1.0
-                # body["frequency_penalty"] = 0.0
-
-                # Enforces strict [System, User] structure to prevent context leakage
-                body["messages"] = [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": user_data},
-                ]
-                self.debug.log("History wiped & Structure enforced: [System, User]")
-                self.debug.log(
-                    f"Model options: temperature:{body['temperature']}|top_p:{body['top_p']}|repeat_penalty:1|frequency_penalty:0"
-                )
-
-            else:
-                # Search Only Logic (??)
-                simple_lang_instr = (
-                    f"*** REQUIRED OUTPUT LANGUAGE: {parsed['lang'].upper()} ***"
-                    if parsed["lang"]
-                    else "DETECT and match the input language."
-                )
-                instr = (
-                    f"Search Query: {content}\n\n"
-                    f"INSTRUCTION: Answer the query above using ONLY the provided search results/context. "
-                    f"Do not hallucinate or use prior conversation memory if unrelated.\n\n"
-                    f"{simple_lang_instr}"
-                )
-                # Search mode keeps single user message for now (less critical)
-                body["messages"] = [{"role": "user", "content": instr}]
-
-            # Phase 7: Apply Features
-            if self.ctx.model.override_web_search is not None:
-                if "features" not in body:
-                    body["features"] = {}
-                body["features"]["web_search"] = self.ctx.model.override_web_search
-
-            self.ctx.model.executed = True
-            self.debug.log(
-                f"Execution Mode: {'Search' if parsed['is_search'] else 'Brief'} | Lang: {parsed['lang'] or 'Auto'}"
-            )
-
-        except Exception as e:
-            await self.debug.error(e)
-
-        return body
-
-    async def outlet(
-        self, body: dict, __user__: dict = None, __event_emitter__=None  # type: ignore
-    ) -> dict:
-        """Process the outgoing response and restore web search state."""
-        try:
-            if self.ctx and self.ctx.model.executed:
-                # Restore original model if it was swapped
-                if self.ctx.model.original_model:
-                    body["model"] = self.ctx.model.original_model
-
-                if "features" in body:
-                    body["features"]["web_search"] = self.ctx.model.web_search_original
-
-                # Handle Output & Debug
-                if "messages" in body and len(body["messages"]) > 0:
-                    last_msg = body["messages"][-1]
-                    content = last_msg.get("content", "")
-
-                    # --- THE BRUTEFORCE SANITIZER INJECTION ---
-                    if SANITIZE_OUTPUT and isinstance(content, str):
-                        content = self._sanitize_output(content)
-                        last_msg["content"] = content
-                    # --- END OF SANITIZER ---
-
-                    debug_out = self.debug.emit()
-
-                    if isinstance(content, str):
-                        last_msg["content"] += debug_out
-                    elif isinstance(content, list) and debug_out:
-                        content.append({"type": "text", "text": debug_out})
-                        last_msg["content"] = content
-
-                self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
-
-                # Minimal completion status
-                await self.em.emit_status("EasyBrief completed", True)
-
-        except Exception as e:
-            # Safety net for outlet errors
-            print(f"EasyBrief Outlet Error: {e}")
-
-        finally:
-            # Prevent State Leaking
-            # Reset context to ensure subsequent requests (like Title Generation)
-            # do not trigger this logic again using stale data.
-            self.ctx = None
-
-        return body
-
     def _sanitize_text_markers(self, content: str) -> str:
         """
         Removes LLM conversational filler and hallucinated labels.
@@ -1798,116 +2654,6 @@ class Filter:
 
         return safe_content
 
-    def _sanitize_mermaid_mindmap(self, content: str) -> str:
-        """
-        Smart sanitizer for Mermaid mindmaps.
-        Respects properly quoted strings and root nodes while brutalizing naked brackets.
-        """
-
-        if (
-            not isinstance(content, str)
-            or "```mermaid" not in content.lower()
-            or "mindmap" not in content.lower()
-        ):
-            return content
-
-        try:
-
-            blocks = re.split(
-                r"(```mermaid\n.*?\n```)", content, flags=re.DOTALL | re.IGNORECASE
-            )
-
-            for i, block in enumerate(blocks):
-
-                if (
-                    block.lower().startswith("```mermaid")
-                    and "mindmap" in block.lower()
-                ):
-                    lines = block.split("\n")
-                    cleaned_lines = []
-
-                    for line in lines:
-                        stripped = line.strip()
-
-                        if (
-                            stripped.lower() in ["```mermaid", "```", "mindmap"]
-                            or not stripped
-                        ):
-                            cleaned_lines.append(line)
-                            continue
-
-                        # Preserve the root node definition exactly as is
-                        if stripped.startswith("root(") or stripped.startswith(
-                            "root(("
-                        ):
-                            cleaned_lines.append(line)
-                            continue
-
-                        # EDGE CASE FIX: If the model protected the text with double quotes,
-                        # Mermaid safely parses any brackets inside. Touching it creates nested quote crashes.
-                        if '"' in stripped:
-                            cleaned_lines.append(line)
-                            continue
-
-                        # Extract indentation to preserve hierarchy
-                        indent = line[: len(line) - len(stripped)]
-
-                        # Bruteforce sterilization for unprotected brackets
-                        safe_text = re.sub(r"[\(\[\{]", ' "', stripped)
-                        safe_text = re.sub(r"[\)\]\}]", '" ', safe_text)
-
-                        # Cleanup formatting
-                        safe_text = re.sub(r"\s+", " ", safe_text).strip()
-
-                        cleaned_lines.append(f"{indent}{safe_text}")
-
-                    blocks[i] = "\n".join(cleaned_lines)
-
-            return "".join(blocks)
-
-        except Exception as e:
-
-            if self.debug:
-                self.debug.log(f"Mindmap Sanitizer Error: {e}")
-
-            return content
-
-    def _sanitize_mermaid_graph(self, content: str) -> str:
-        """
-        Fixes common trailing character hallucinations in graph TD.
-        Example: converts Node["Text"]) into valid Node["Text"].
-        """
-
-        if (
-            not isinstance(content, str)
-            or "```mermaid" not in content.lower()
-            or "graph " not in content.lower()
-        ):
-            return content
-
-        try:
-
-            blocks = re.split(
-                r"(```mermaid\n.*?\n```)", content, flags=re.DOTALL | re.IGNORECASE
-            )
-
-            for i, block in enumerate(blocks):
-
-                if block.lower().startswith("```mermaid") and "graph " in block.lower():
-                    # Fix trailing parenthesis/bracket after a valid node definition
-                    safe_block = re.sub(r'(\["[^"\]]+"\])\)', r"\1", block)
-                    safe_block = re.sub(r'(\("[^"\)]+"\))\]', r"\1", safe_block)
-                    blocks[i] = safe_block
-
-            return "".join(blocks)
-
-        except Exception as e:
-
-            if self.debug:
-                self.debug.log(f"Graph Sanitizer Error: {e}")
-
-            return content
-
     def _sanitize_output(self, content: str) -> str:
         """
         Master pipeline for deterministic output sanitization.
@@ -1918,7 +2664,8 @@ class Filter:
             return content
 
         content = self._sanitize_text_markers(content)
-        content = self._sanitize_mermaid_mindmap(content)
-        content = self._sanitize_mermaid_graph(content)
+        # Note: Mermaid sanitization now handled in the stream function with MITM
+        # content = self._sanitize_mermaid_mindmap(content)
+        # content = self._sanitize_mermaid_graph(content)
 
         return content
