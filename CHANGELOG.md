@@ -1,3 +1,8 @@
+* 2026-03-07: v0.5.10 - Advanced Markdown & Mermaid Hallucination Fixes (Hannibal)  
+  * Added implicit Mermaid block closure to prevent unclosed code blocks from bleeding into markdown structure.
+  * Expanded hallucination patch to intercept and correct `[mermaid]` tags.
+  * Enforced proper spacing for horizontal rules (`---`) by injecting empty lines.
+
 * 2026-03-07: v0.5.9 - MITM Stream Session Activation Fix (Hannibal)  
   * Fixed a bug where the MITM stream session was bypassed because it was never initialized with `bypass: False` during the `inlet` phase.
   * Ensures the MITM streaming pipeline is properly activated when EasyBrief is triggered.

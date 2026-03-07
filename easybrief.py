@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.9
+version: 0.5.10
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -2106,6 +2106,15 @@ class Filter:
         if session["is_inside"]:
             session["buffer"] += content
 
+            # Implicit block closure if the LLM hallucinated the end of the block and started a new section
+            if "```" not in session["buffer"]:
+                match = re.search(r"\n(?=(?:---|___|\*\*\*)\n|##+ )", session["buffer"])
+                if match:
+                    idx = match.start()
+                    session["buffer"] = (
+                        session["buffer"][:idx] + "\n```\n" + session["buffer"][idx:]
+                    )
+
             # Check if we exited the block or stream ended
             if "```" in session["buffer"] or finish_reason:
                 session["is_inside"] = False
@@ -2152,6 +2161,10 @@ class Filter:
 
             # Generalize Mermaid diagram marker transformation
             def _mermaid_repl(m):
+                raw_type = m.group(1).strip().lower()
+                if raw_type == "mermaid":
+                    return "\n```mermaid\n"
+
                 diagram_map = {
                     "pie": "pie",
                     "graph": "graph TD",
@@ -2170,14 +2183,18 @@ class Filter:
                     "journey": "journey",
                     "timeline": "timeline",
                 }
-                raw_type = m.group(1).strip().lower()
                 diagram_type = diagram_map.get(raw_type, m.group(1).strip())
                 return f"\n```mermaid\n{diagram_type}\n"
 
             session["out_buffer"] = re.sub(
-                r"(?i)\[(pie|graph(?:\s+[a-z]+)?|flowchart(?:\s+[a-z]+)?|mindmap|gantt|erdiagram|classdiagram|sequencediagram|statediagram(?:-v2)?|journey|timeline)\]\s*",
+                r"(?i)\[(mermaid|pie|graph(?:\s+[a-z]+)?|flowchart(?:\s+[a-z]+)?|mindmap|gantt|erdiagram|classdiagram|sequencediagram|statediagram(?:-v2)?|journey|timeline)\]\s*",
                 _mermaid_repl,
                 session["out_buffer"],
+            )
+
+            # Fix separator spacing (ensure empty lines around ---)
+            session["out_buffer"] = re.sub(
+                r"([^\n])\n---\n([^\n])", r"\1\n\n---\n\n\2", session["out_buffer"]
             )
 
             if session["out_buffer"] != old_out:
