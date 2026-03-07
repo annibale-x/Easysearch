@@ -1,3 +1,8 @@
+* 2026-03-07: v0.5.7 - MITM Hallucination Patch & Stream Flush (Hannibal)  
+  * Implemented MITM patch to convert hallucinated tags (`[pie]`, `[graph TD]`, `[mindmap]`) into valid Mermaid blocks.
+  * Added filter to silently strip erroneous `[table]` text markers from stream.
+  * Enhanced stream buffer logic to handle `finish_reason` and properly flush/close Mermaid blocks at the end of generation.
+
 * 2026-03-07: v0.5.6 - Code Cleanup (Hannibal)  
   * Removed unused `UserModel` from imports.
   * Removed unused `Union` typing from imports.

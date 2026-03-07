@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.6
+version: 0.5.7
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -18,7 +18,6 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 # Open WebUI Imports
-from open_webui.main import app  # type: ignore
 from open_webui.models.users import Users  # type: ignore
 from open_webui.routers.retrieval import SearchForm, process_web_search  # type: ignore
 from open_webui.utils.chat import generate_chat_completion  # type: ignore
@@ -70,7 +69,7 @@ Aim for maximum information density within the target length.
 """
 
 # Key Takeaways Block Template
-MOD_TAKEAWAYS = f"""
+MOD_TAKEAWAYS = """
 End your response with only one text block. Use exactly this template (you MUST use the 📌 emoji):
 ### 📌 Key Takeaways
 > - Your label: Description.
@@ -2079,9 +2078,12 @@ class Filter:
         if not choices:
             return event
 
-        content = choices[0].get("delta", {}).get("content", "")
+        choice = choices[0]
+        delta = choice.setdefault("delta", {})
+        content = delta.get("content", "")
+        finish_reason = choice.get("finish_reason")
 
-        if not content:
+        if not content and not finish_reason:
             return event
 
         # 1. Update the global response memory
@@ -2091,13 +2093,17 @@ class Filter:
         if session["is_inside"]:
             session["buffer"] += content
 
-            # Check if we exited the block
-            if "```" in session["buffer"]:
+            # Check if we exited the block or stream ended
+            if "```" in session["buffer"] or finish_reason:
                 session["is_inside"] = False
 
-                parts = session["buffer"].split("```", 1)
-                raw_mermaid = parts[0]
-                remainder = parts[1] if len(parts) > 1 else ""
+                if "```" in session["buffer"]:
+                    parts = session["buffer"].split("```", 1)
+                    raw_mermaid = parts[0]
+                    remainder = parts[1] if len(parts) > 1 else ""
+                else:
+                    raw_mermaid = session["buffer"]
+                    remainder = ""
 
                 # Use dedicated MermaidSanitizer for sanitization
                 sanitized = self.mermaid_sanitizer._sanitize_mermaid(
@@ -2111,17 +2117,42 @@ class Filter:
                         "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n" + sanitized
                     )
 
-                event["choices"][0]["delta"]["content"] = sanitized + "\n```\n"
+                choice["delta"]["content"] = sanitized + "\n```\n" + remainder
 
                 session["buffer"] = ""
-                session["out_buffer"] = remainder
+                session["out_buffer"] = ""
 
             else:
                 # Block is still open, suppress content (to be replaced by sanitized version)
-                event["choices"][0]["delta"]["content"] = ""
+                choice["delta"]["content"] = ""
 
         else:
             session["out_buffer"] += content
+
+            # --- MITM HALLUCINATION PATCH ---
+            old_out = session["out_buffer"]
+            session["out_buffer"] = re.sub(
+                r"(?i)\[table\]\s*", "", session["out_buffer"]
+            )
+            session["out_buffer"] = re.sub(
+                r"(?i)\[pie\]\s*", "\n```mermaid\npie\n", session["out_buffer"]
+            )
+            session["out_buffer"] = re.sub(
+                r"(?i)\[graph(?:\s+td)?\]\s*",
+                "\n```mermaid\ngraph TD\n",
+                session["out_buffer"],
+            )
+            session["out_buffer"] = re.sub(
+                r"(?i)\[mindmap\]\s*", "\n```mermaid\nmindmap\n", session["out_buffer"]
+            )
+
+            if session["out_buffer"] != old_out:
+                cut_idx = len(session["full_text"]) - len(old_out)
+                session["full_text"] = (
+                    session["full_text"][:cut_idx] + session["out_buffer"]
+                )
+            # --------------------------------
+
             lower_out = session["out_buffer"].lower()
 
             # TRANSITION A: Entering a Mermaid block
@@ -2152,29 +2183,48 @@ class Filter:
                     # Genuine block: start interception
                     session["is_inside"] = True
 
-                    event["choices"][0]["delta"]["content"] = (
-                        before_mermaid + mermaid_tag + "\n"
-                    )
+                    choice["delta"]["content"] = before_mermaid + mermaid_tag + "\n"
 
                     session["out_buffer"] = ""
                     session["buffer"] = after_mermaid
 
+                    if finish_reason:
+                        sanitized = self.mermaid_sanitizer._sanitize_mermaid(
+                            session["buffer"], valves
+                        )
+                        if sanitized.strip() != session["buffer"].strip():
+                            sanitized = (
+                                "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n"
+                                + sanitized
+                            )
+
+                        choice["delta"]["content"] += sanitized + "\n```\n"
+                        session["is_inside"] = False
+                        session["buffer"] = ""
+
                 # It's an inline mention (e.g. conversational text). Let it pass cleanly!
                 else:
-                    event["choices"][0]["delta"]["content"] = (
-                        before_mermaid + mermaid_tag
-                    )
+                    choice["delta"]["content"] = before_mermaid + mermaid_tag
                     session["out_buffer"] = after_mermaid
+
+                    if finish_reason:
+                        choice["delta"]["content"] += session["out_buffer"]
+                        session["out_buffer"] = ""
+
+            # Stream ended, flush the remaining buffer
+            elif finish_reason:
+                choice["delta"]["content"] = session["out_buffer"]
+                session["out_buffer"] = ""
 
             # Still outside, hold back the pre-buffer window to avoid un-curable leaks
             elif len(session["out_buffer"]) > 15:
                 safe_chunk = session["out_buffer"][:-15]
                 session["out_buffer"] = session["out_buffer"][-15:]
-                event["choices"][0]["delta"]["content"] = safe_chunk
+                choice["delta"]["content"] = safe_chunk
 
             else:
                 # Pre-buffer window too small, suppress content
-                event["choices"][0]["delta"]["content"] = ""
+                choice["delta"]["content"] = ""
 
         return event
 
