@@ -1,3 +1,6 @@
+* 2026-03-07: v0.5.8 - Generalized Mermaid Hallucination Patch (Hannibal)  
+  * Generalized the MITM hallucination patch to dynamically support all Mermaid diagram types (gantt, erDiagram, sequenceDiagram, etc.) beyond just pie, graph, and mindmap.
+
 * 2026-03-07: v0.5.7 - MITM Hallucination Patch & Stream Flush (Hannibal)  
   * Implemented MITM patch to convert hallucinated tags (`[pie]`, `[graph TD]`, `[mindmap]`) into valid Mermaid blocks.
   * Added filter to silently strip erroneous `[table]` text markers from stream.

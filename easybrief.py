@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.7
+version: 0.5.8
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -2131,19 +2131,40 @@ class Filter:
 
             # --- MITM HALLUCINATION PATCH ---
             old_out = session["out_buffer"]
+
+            # Strip [table] marker completely
             session["out_buffer"] = re.sub(
                 r"(?i)\[table\]\s*", "", session["out_buffer"]
             )
+
+            # Generalize Mermaid diagram marker transformation
+            def _mermaid_repl(m):
+                diagram_map = {
+                    "pie": "pie",
+                    "graph": "graph TD",
+                    "graph td": "graph TD",
+                    "graph lr": "graph LR",
+                    "flowchart": "flowchart TD",
+                    "flowchart td": "flowchart TD",
+                    "flowchart lr": "flowchart LR",
+                    "mindmap": "mindmap",
+                    "gantt": "gantt",
+                    "erdiagram": "erDiagram",
+                    "classdiagram": "classDiagram",
+                    "sequencediagram": "sequenceDiagram",
+                    "statediagram": "stateDiagram",
+                    "statediagram-v2": "stateDiagram-v2",
+                    "journey": "journey",
+                    "timeline": "timeline",
+                }
+                raw_type = m.group(1).strip().lower()
+                diagram_type = diagram_map.get(raw_type, m.group(1).strip())
+                return f"\n```mermaid\n{diagram_type}\n"
+
             session["out_buffer"] = re.sub(
-                r"(?i)\[pie\]\s*", "\n```mermaid\npie\n", session["out_buffer"]
-            )
-            session["out_buffer"] = re.sub(
-                r"(?i)\[graph(?:\s+td)?\]\s*",
-                "\n```mermaid\ngraph TD\n",
+                r"(?i)\[(pie|graph(?:\s+[a-z]+)?|flowchart(?:\s+[a-z]+)?|mindmap|gantt|erdiagram|classdiagram|sequencediagram|statediagram(?:-v2)?|journey|timeline)\]\s*",
+                _mermaid_repl,
                 session["out_buffer"],
-            )
-            session["out_buffer"] = re.sub(
-                r"(?i)\[mindmap\]\s*", "\n```mermaid\nmindmap\n", session["out_buffer"]
             )
 
             if session["out_buffer"] != old_out:
