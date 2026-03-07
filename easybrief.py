@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.11
+version: 0.5.12
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -2347,7 +2347,10 @@ class Filter:
                 self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
 
                 # Minimal completion status
-                await self.em.emit_status("EasyBrief completed", True)
+                if self.em and __event_emitter__:
+                    self.em.emitter = __event_emitter__
+                if self.em:
+                    await self.em.emit_status("EasyBrief completed", True)
 
         except Exception as e:
             # Safety net for outlet errors

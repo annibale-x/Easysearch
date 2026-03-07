@@ -1,3 +1,6 @@
+* 2026-03-07: v0.5.12 - Stream Status Completion Fix (Hannibal)  
+  * Fixed an issue where the frontend status indicator would hang indefinitely on "Generating..." by passing the correct `__event_emitter__` object to the `outlet` method.
+
 * 2026-03-07: v0.5.11 - Robust Markdown Spacing & Implicit Closure Fix (Hannibal)  
   * Refactored regex for horizontal separators (`---`) to properly isolate them with `\n\n` without breaking Markdown tables.
   * Fixed implicit Mermaid block closure to correctly append `\n```\n\n` while handling preceding line breaks properly.
