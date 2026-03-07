@@ -1,3 +1,8 @@
+* 2026-03-07: v0.5.11 - Robust Markdown Spacing & Implicit Closure Fix (Hannibal)  
+  * Refactored regex for horizontal separators (`---`) to properly isolate them with `\n\n` without breaking Markdown tables.
+  * Fixed implicit Mermaid block closure to correctly append `\n```\n\n` while handling preceding line breaks properly.
+  * Resolved formatting issues causing text to stick to headers after hallucinated code blocks.
+
 * 2026-03-07: v0.5.10 - Advanced Markdown & Mermaid Hallucination Fixes (Hannibal)  
   * Added implicit Mermaid block closure to prevent unclosed code blocks from bleeding into markdown structure.
   * Expanded hallucination patch to intercept and correct `[mermaid]` tags.

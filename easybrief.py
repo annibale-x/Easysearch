@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.10
+version: 0.5.11
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -2108,11 +2108,15 @@ class Filter:
 
             # Implicit block closure if the LLM hallucinated the end of the block and started a new section
             if "```" not in session["buffer"]:
-                match = re.search(r"\n(?=(?:---|___|\*\*\*)\n|##+ )", session["buffer"])
+                match = re.search(
+                    r"^[ \t]*(?:---|___|\*\*\*)[ \t]*$|^##+\s",
+                    session["buffer"],
+                    flags=re.MULTILINE,
+                )
                 if match:
                     idx = match.start()
                     session["buffer"] = (
-                        session["buffer"][:idx] + "\n```\n" + session["buffer"][idx:]
+                        session["buffer"][:idx] + "\n```\n\n" + session["buffer"][idx:]
                     )
 
             # Check if we exited the block or stream ended
@@ -2127,6 +2131,17 @@ class Filter:
                     raw_mermaid = session["buffer"]
                     remainder = ""
 
+                    # Safety cut if implicit closure missed it during chunking
+                    safety_match = re.search(
+                        r"^[ \t]*(?:---|___|\*\*\*)[ \t]*$|^##+\s",
+                        raw_mermaid,
+                        flags=re.MULTILINE,
+                    )
+                    if safety_match:
+                        idx = safety_match.start()
+                        remainder = raw_mermaid[idx:]
+                        raw_mermaid = raw_mermaid[:idx]
+
                 # Use dedicated MermaidSanitizer for sanitization
                 sanitized = self.mermaid_sanitizer._sanitize_mermaid(
                     raw_mermaid, valves
@@ -2139,7 +2154,16 @@ class Filter:
                         "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n" + sanitized
                     )
 
-                choice["delta"]["content"] = sanitized + "\n```\n" + remainder
+                # Fix separator spacing for remainder
+                remainder = remainder.lstrip()
+                remainder = re.sub(
+                    r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*",
+                    "\n\n---\n\n",
+                    remainder,
+                    flags=re.MULTILINE,
+                )
+
+                choice["delta"]["content"] = sanitized + "\n```\n\n" + remainder
 
                 session["buffer"] = ""
                 session["out_buffer"] = ""
@@ -2194,7 +2218,10 @@ class Filter:
 
             # Fix separator spacing (ensure empty lines around ---)
             session["out_buffer"] = re.sub(
-                r"([^\n])\n---\n([^\n])", r"\1\n\n---\n\n\2", session["out_buffer"]
+                r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*",
+                "\n\n---\n\n",
+                session["out_buffer"],
+                flags=re.MULTILINE,
             )
 
             if session["out_buffer"] != old_out:
