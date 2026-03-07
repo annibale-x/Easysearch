@@ -1,3 +1,10 @@
+* 2026-03-07: v0.5.4 - MITM Logic Pre-integration (Hannibal)  
+  * Implemented preliminary framework for Man-in-the-Middle streaming architecture.
+  * Integrated Mermaid sanitizer components from mermaid-doctor repository.
+  * Prepared foundation for real-time Mermaid diagram correction.
+  * Added modular sanitizer service architecture for future extensibility.
+  * Initial integration of buffering and session management logic.
+
 * 2026-03-01: v0.5.3 - Prompt Optimization & Sanitizer Pipeline (Hannibal)  
   * Reverted architecture to standard System Prompt injection.
   * Optimized mindmap prompt from negative constraints to active task ("Remove parentheses from labels text").
