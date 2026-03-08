@@ -176,13 +176,13 @@ graph TD
     """,
     },
     "pie": {
-        "rule": "SKIP Mermaid PIE if source text does not explicitly contains proportional data (percentages, market share).",
+        "rule": "IF AND ONLY IF the text contains explicit numbers (percentages, fractions) -> USE Mermaid pie. ELSE -> SKIP.",
         "syntax": """**Pie Charts**: Mermaid `pie`.
     RULES:
-    1. MANDATORY CHECK: Does the source text contain explicit numbers representing a "Market Share", "Budget" or "Distribution"? If NO, output nothing.
-    2. FORBIDDEN: Do NOT generate a pie chart for lists of concepts (e.g., "Risks", "Consequences", "Benefits") unless specific percentages are provided in the text.
-    3. WARNING: DO NOT INVENT DATA. If percentages are missing, SKIP this chart.
-    4. CRITICAL: NO percentage symbol `%`. Use ONLY raw numbers (e.g. `"Label" : 40`).
+    1. EXTRACT numbers directly from the source text.
+    2. If you cannot find explicit numerical data (e.g., %, ratios) in the source text, IT IS STRICTLY FORBIDDEN to output a pie chart.
+    3. Outputting a pie chart with guessed or estimated numbers is a SYSTEM FAILURE.
+    4. NO percentage symbol `%`. Use ONLY raw numbers.
     5. CRITICAL: NO parentheses `()` in title.
     6. Always specify the code-block type: ```mermaid.
     7. Follow EXACTLY the syntax of the provided one-shot:
@@ -1045,6 +1045,96 @@ class MermaidSanitizer:
     Implements the same logic as mermaid-doctor but in a modular component.
     """
 
+    SANITIZER_VERSION = "2.0.3"
+
+    def __init__(self):
+        # Common
+        self.re_whitespace = re.compile(r"\s+")
+        self.re_markdown_bold = re.compile(r"(\*\*|__|\*)")
+        self.re_non_alnum = re.compile(r"[^a-zA-Z0-9]")
+        self.re_non_alnum_underscore = re.compile(r"[^a-zA-Z0-9_]")
+        self.re_alphanumeric = re.compile(r"^[a-zA-Z0-9_]+$")
+
+        # _sanitize_mermaid
+        self.re_task_numbers = re.compile(r"^\s*\d+[\.\)\-]\s*")
+        self.re_diagram_types = re.compile(
+            r"(?m)^\s*(mindmap|graph|flowchart|pie|gantt|erdiagram|classdiagram|sequencediagram|statediagram|journey|timeline)\b",
+            re.IGNORECASE,
+        )
+
+        # _sanitize_gantt
+        self.re_gantt_dur = re.compile(r"\bdur\s+(\d+[smhdwM])", re.IGNORECASE)
+        self.re_gantt_duration = re.compile(r"^\d+[smhdwM]$")
+        self.re_date = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+        # _sanitize_pie
+        self.re_pie_node_label = re.compile(
+            r'^[A-Za-z0-9_]*\s*[\[\(]\s*"?([^"\]\)]+)"?\s*[\]\)]?$'
+        )
+
+        # _sanitize_er
+        self.re_er_arrow_fix = re.compile(
+            r"([A-Za-z0-9_]+)\s*(?:-->>|-->|->|-\.>|\.\.>|=>|==>|-{1,3}\|>)\s*([A-Za-z0-9_]+)"
+        )
+        self.re_er_mixed_rel_fix = re.compile(
+            r"([A-Za-z0-9_]+)\s*(?:[\}o\|]*--[\}o\|]*\.\.[\}o\|]*|[\}o\|]*\.\.[\}o\|]*--[\}o\|]*)\s*([A-Za-z0-9_]+)"
+        )
+        self.re_er_is_rel = re.compile(r"[\}o\|]*(?:--|\.\.)[o\|\{]*")
+        self.re_er_clean_entity_call = re.compile(
+            r'([A-Za-z0-9_]+)\s*[\[\(]\s*"?([^"\]\)]+)"?[\]\)]?'
+        )
+        self.re_er_rel_spaces = re.compile(r"([\}o\|]+)\s*(--|\.\.)\s*([o\|\{]+)")
+        self.re_er_rel_spacing = re.compile(
+            r"([A-Za-z0-9_]+)\s*([\}o\|]*(?:--|\.\.)[o\|\{]*)\s*([A-Za-z0-9_]+)"
+        )
+        self.re_er_attr_def = re.compile(
+            r"^(\s*)([a-zA-Z0-9_]+)\s*:\s*([a-zA-Z0-9_]+)\s*$"
+        )
+        self.re_er_leading_sign = re.compile(r"^(\s*)[\+\-\~]\s*")
+        self.re_er_reversed_attr = re.compile(
+            r"^(\s*)([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*$"
+        )
+        self.re_er_title = re.compile(
+            r'^[A-Za-z0-9_]*\s*[\[\(]\s*"?([^"\]\)]+)"?[\]\)]?$'
+        )
+
+        # _sanitize_mindmap
+        self.re_mindmap_ids = re.compile(r"\b[A-Za-z0-9_]+\s*[\(\[\{]+")
+        self.re_mindmap_closers = re.compile(r'[\)\]\}]+|["\';]')
+        self.re_mindmap_arrows = re.compile(r"-->|\|")
+        self.re_mindmap_prefix = re.compile(r"^(?:[\|\+\-\*\>]\s*)+")
+        self.re_open_brackets = re.compile(r"[\(\[\{]")
+        self.re_close_brackets = re.compile(r"[\)\]\}]")
+        self.re_double_quotes = re.compile(r'("\s*")+')
+
+        # _sanitize_graph
+        self.re_graph_def_fix = re.compile(
+            r'graph_([a-zA-Z]{2})\s*\[\s*[\'"]graph\s+[a-zA-Z]{2}[\'"]\s*\]',
+            re.IGNORECASE,
+        )
+        self.re_graph_node_paren_fix = re.compile(r'(\["[^"\]]+"\])\)')
+        self.re_graph_node_bracket_fix = re.compile(r'(\("[^"\)]+"\))\]')
+        self.re_graph_cylinder_fix = re.compile(r'\)"\]')
+        self.re_graph_swapped_quote = re.compile(r"\"\s*\)\s*([\]\}\)])")
+        self.re_graph_node_content = re.compile(r"\[(.*?)\]")
+        self.re_graph_link_in_node = re.compile(r'-->\s*\|\s*"?([^|\]"]+)"?\s*\]')
+        self.re_graph_node_match = re.compile(r"^([^\[\(\{\>]+?)\s*([\[\(\{\>].*)?$")
+        self.re_graph_shape_match = re.compile(
+            r"^([\[\(\{\>]+[\/\\]?)\s*[\"']?(.*?)[\"']?\s*([\/\\]?[\]\)\}]+)$"
+        )
+        self.re_graph_edge_label_quoted = re.compile(r'^\|\s*"([^"]+)"\s*\|?(.*)')
+        self.re_graph_edge_label = re.compile(r"^\|([^|]+)\|(.*)")
+
+        self.reserved_keywords = {
+            "end",
+            "subgraph",
+            "click",
+            "style",
+            "class",
+            "classdef",
+            "linkstyle",
+        }
+
     def _sanitize_mermaid(self, raw_code: str, valves: BaseModel) -> str:
         """
         Cleans and enforces Mermaid syntax.
@@ -1055,24 +1145,37 @@ class MermaidSanitizer:
         code = raw_code.replace("\xa0", " ").strip()
 
         # Eradicate hallucinated task numbers at the start of the block (e.g., "1. graph TD" -> "graph TD")
-        code = re.sub(r"^\s*\d+[\.\)\-]\s*", "", code)
+        code = self.re_task_numbers.sub("", code)
+
+        # Deduplicate multiple diagram declarations (keep only the last one)
+        # Models often repeat the diagram code (e.g. "mindmap ... mindmap ...")
+        # We find all diagram start keywords and keep the content starting from the last occurrence.
+        matches = list(self.re_diagram_types.finditer(code))
+        if len(matches) > 1:
+            last_match = matches[-1]
+            code = code[last_match.start() :]
 
         code_lower = code.lower()
+        diagram_type = matches[-1].group(1).lower() if matches else None
 
         # Route to specific sanitizers based on graph type
-        if "mindmap" in code_lower:
+        if diagram_type == "mindmap" or (not diagram_type and "mindmap" in code_lower):
             code = self._sanitize_mindmap(code)
 
-        elif "graph " in code_lower:
+        elif diagram_type in ("graph", "flowchart") or (
+            not diagram_type and ("graph " in code_lower or "flowchart" in code_lower)
+        ):
             code = self._sanitize_graph(code, valves)
 
-        elif "erdiagram" in code_lower:
+        elif diagram_type == "erdiagram" or (
+            not diagram_type and "erdiagram" in code_lower
+        ):
             code = self._sanitize_er(code)
 
-        elif "pie" in code_lower:
+        elif diagram_type == "pie" or (not diagram_type and "pie" in code_lower):
             code = self._sanitize_pie(code)
 
-        elif "gantt" in code_lower:
+        elif diagram_type == "gantt" or (not diagram_type and "gantt" in code_lower):
             code = self._sanitize_gantt(code)
 
         return "\n" + code + "\n"
@@ -1157,9 +1260,7 @@ class MermaidSanitizer:
                 data = parts[-1].strip()
 
                 # Eradicate hallucinated 'dur' prefixes
-                data = re.sub(
-                    r"\bdur\s+(\d+[smhdwM])", r"\1", data, flags=re.IGNORECASE
-                )
+                data = self.re_gantt_dur.sub(r"\1", data)
 
                 # Safe split of data properties
                 if "," not in data:
@@ -1181,10 +1282,10 @@ class MermaidSanitizer:
                     if p_lower in ["active", "done", "crit", "milestone"]:
                         status_part = p_lower
 
-                    elif re.match(r"^\d+[smhdwM]$", p):
+                    elif self.re_gantt_duration.match(p):
                         duration_part = p
 
-                    elif re.match(r"^\d{4}-\d{2}-\d{2}$", p):
+                    elif self.re_date.match(p):
                         try:
                             # Basic validation to prevent hallucinations like 2024-01-33
                             d_parts = p.split("-")
@@ -1207,7 +1308,7 @@ class MermaidSanitizer:
 
                     else:
                         # Fallback for ID recognition
-                        if not id_part and re.match(r"^[a-zA-Z0-9_]+$", p):
+                        if not id_part and self.re_alphanumeric.match(p):
                             id_part = p
 
                 task_counter += 1
@@ -1273,9 +1374,7 @@ class MermaidSanitizer:
                 value = parts[1].strip()
 
                 # Extract label from node syntax (ID[Label])
-                node_match = re.match(
-                    r'^[A-Za-z0-9_]*\s*[\[\(]\s*"?([^"\]\)]+)"?\s*[\]\)]$', raw_label
-                )
+                node_match = self.re_pie_node_label.match(raw_label)
 
                 if node_match:
                     raw_label = node_match.group(1).strip()
@@ -1320,20 +1419,12 @@ class MermaidSanitizer:
                 continue
 
             # Fix hallucinated sequence/flowchart AND UML inheritance arrows (e.g. -->>, ->, ---|>)
-            line = re.sub(
-                r"([A-Za-z0-9_]+)\s*(?:-->>|-->|->|-\.>|\.\.>|=>|==>|-{1,3}\|>)\s*([A-Za-z0-9_]+)",
-                r"\1 ||--o{ \2",
-                line,
-            )
+            line = self.re_er_arrow_fix.sub(r"\1 ||--o{ \2", line)
 
             # Fix hallucinated mixed-line relations (e.g. ||--|..|) containing both solid and dashed elements
-            line = re.sub(
-                r"([A-Za-z0-9_]+)\s*(?:[\}o\|]*--[\}o\|]*\.\.[\}o\|]*|[\}o\|]*\.\.[\}o\|]*--[\}o\|]*)\s*([A-Za-z0-9_]+)",
-                r"\1 ||--o{ \2",
-                line,
-            )
+            line = self.re_er_mixed_rel_fix.sub(r"\1 ||--o{ \2", line)
 
-            is_relationship = bool(re.search(r"[\}o\|]*(?:--|\.\.)[o\|\{]*", line))
+            is_relationship = bool(self.re_er_is_rel.search(line))
 
             # Process relationships
             if is_relationship:
@@ -1349,15 +1440,11 @@ class MermaidSanitizer:
                     """
 
                     entity_name = match.group(2)
-                    return re.sub(r"\s+", "_", entity_name.strip())
+                    return self.re_whitespace.sub("_", entity_name.strip())
 
-                line = re.sub(
-                    r'([A-Za-z0-9_]+)\s*[\[\(]\s*"?([^"\]\)]+)"?[\]\)]?',
-                    _clean_entity,
-                    line,
-                )
+                line = self.re_er_clean_entity_call.sub(_clean_entity, line)
 
-                line = re.sub(r"([\}o\|]+)\s*(--|\.\.)\s*([o\|\{]+)", r"\1\2\3", line)
+                line = self.re_er_rel_spaces.sub(r"\1\2\3", line)
 
                 # Extended fix for hallucinated extra pipes and hybrid cardinalities
                 for bad, good in [
@@ -1372,11 +1459,7 @@ class MermaidSanitizer:
                 ]:
                     line = line.replace(bad, good)
 
-                line = re.sub(
-                    r"([A-Za-z0-9_]+)\s*([\}o\|]*(?:--|\.\.)[o\|\{]*)\s*([A-Za-z0-9_]+)",
-                    r"\1 \2 \3",
-                    line,
-                )
+                line = self.re_er_rel_spacing.sub(r"\1 \2 \3", line)
 
                 # Fix unquoted relationship labels with spaces or force missing labels
                 if ":" not in line:
@@ -1385,7 +1468,7 @@ class MermaidSanitizer:
                 else:
                     parts = line.split(":", 1)
                     rel_label = parts[1].strip().strip("\"'")
-                    rel_label = re.sub(r"\s+", "_", rel_label)
+                    rel_label = self.re_whitespace.sub("_", rel_label)
 
                     if not rel_label:
                         rel_label = "relates_to"
@@ -1412,9 +1495,7 @@ class MermaidSanitizer:
 
                 # Process attribute definitions
                 if ":" in stripped:
-                    m = re.match(
-                        r"^(\s*)([a-zA-Z0-9_]+)\s*:\s*([a-zA-Z0-9_]+)\s*$", line
-                    )
+                    m = self.re_er_attr_def.match(line)
 
                     if m:
                         line = f"{m.group(1)}{m.group(3)} {m.group(2)}"
@@ -1422,12 +1503,10 @@ class MermaidSanitizer:
                         continue
 
                 # Remove leading signs (+, -, ~)
-                line = re.sub(r"^(\s*)[\+\-\~]\s*", r"\1", line)
+                line = self.re_er_leading_sign.sub(r"\1", line)
 
                 # Fix reversed attribute format
-                line = re.sub(
-                    r"^(\s*)([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*$", r"\1\3 \2", line
-                )
+                line = self.re_er_reversed_attr.sub(r"\1\3 \2", line)
 
                 cleaned_lines.append(line)
 
@@ -1441,9 +1520,7 @@ class MermaidSanitizer:
                 in_entity_block = False
 
             # Process title lines
-            title_match = re.match(
-                r'^[A-Za-z0-9_]*\s*[\[\(]\s*"?([^"\]\)]+)"?[\]\)]?$', stripped
-            )
+            title_match = self.re_er_title.match(stripped)
 
             if title_match:
                 cleaned_lines.append(f'title "{title_match.group(1).strip()}"')
@@ -1485,19 +1562,34 @@ class MermaidSanitizer:
                 continue
 
             indent = line[: len(line) - len(stripped)]
-            safe_text = re.sub(r"^(?:[\|\+\-\*\>]\s*)+", "", stripped)
 
-            # Skip empty lines
-            if not safe_text:
-                continue
+            # Mixed Syntax Handling: If Graph syntax detected (-->)
+            if "-->" in stripped:
+                # Remove IDs and graph syntax: A(...) or B[...]
+                safe_text = self.re_mindmap_ids.sub("", stripped)
+                # Remove closing brackets/parens/quotes/semicolons
+                safe_text = self.re_mindmap_closers.sub("", safe_text)
+                # Replace arrows and pipes with spaces
+                safe_text = self.re_mindmap_arrows.sub(" ", safe_text)
+                # Clean text from markdown formatting
+                safe_text = self.re_markdown_bold.sub("", safe_text)
+                # Normalize spaces
+                safe_text = self.re_whitespace.sub(" ", safe_text).strip()
 
-            # Clean text from markdown formatting
-            safe_text = re.sub(r"(\*\*|__|\*)", "", safe_text)
-            safe_text = safe_text.replace('"', "")
-            safe_text = re.sub(r"[\(\[\{]", ' "', safe_text)
-            safe_text = re.sub(r"[\)\]\}]", '" ', safe_text)
-            safe_text = re.sub(r'("\s*")+', '"', safe_text)
-            safe_text = re.sub(r"\s+", " ", safe_text).strip()
+            else:
+                safe_text = self.re_mindmap_prefix.sub("", stripped)
+
+                # Skip empty lines
+                if not safe_text:
+                    continue
+
+                # Clean text from markdown formatting
+                safe_text = self.re_markdown_bold.sub("", safe_text)
+                safe_text = safe_text.replace('"', "")
+                safe_text = self.re_open_brackets.sub(' "', safe_text)
+                safe_text = self.re_close_brackets.sub('" ', safe_text)
+                safe_text = self.re_double_quotes.sub('"', safe_text)
+                safe_text = self.re_whitespace.sub(" ", safe_text).strip()
 
             cleaned_lines.append(f"{indent}{safe_text}")
 
@@ -1539,128 +1631,33 @@ class MermaidSanitizer:
         naked quoted nodes, and style stripping.
         """
 
-        block = re.sub(
-            r'graph_([a-zA-Z]{2})\s*\[\s*[\'"]graph\s+[a-zA-Z]{2}[\'"]\s*\]',
-            r"graph \1",
-            block,
-            flags=re.IGNORECASE,
-        )
+        block = self.re_graph_def_fix.sub(r"graph \1", block)
 
-        safe_block = re.sub(r'(\["[^"\]]+"\])\)', r"\1", block)
-        safe_block = re.sub(r'(\("[^"\)]+"\))\]', r"\1", safe_block)
+        safe_block = self.re_graph_node_paren_fix.sub(r"\1", block)
+        safe_block = self.re_graph_node_bracket_fix.sub(r"\1", safe_block)
 
         # Fix: "CYLINDEREND" parsing error.
-        # When a node label ends with `)`, e.g., `["Text (Example)"]`, Mermaid parser
-        # might confuse `)]` with the end of a cylinder `[(...)]`.
-        # We inject a space to break the sequence: `["Text (Example) "]`.
-        safe_block = re.sub(r'\(([^)]+)\)"\]', r"(\1) \"]", safe_block)
+        safe_block = self.re_graph_cylinder_fix.sub(r") \"]", safe_block)
+
+        # Fix: Swapped quote and parenthesis at end of node (common hallucination)
+        # e.g. `{"Text")}` -> `{"Text)"}` or `["Text")]` -> `["Text)"]`
+        safe_block = self.re_graph_swapped_quote.sub(r')"\1', safe_block)
 
         # Fix: Remove structural characters (--> and |) from inside node labels [...]
-        # This prevents parser confusion when models put links inside nodes.
-        safe_block = re.sub(
-            r"\[(.*?)\]",
+        safe_block = self.re_graph_node_content.sub(
             lambda m: f"[{m.group(1).replace('-->', ' ').replace('|', ' ')}]",
             safe_block,
         )
 
-        safe_block = re.sub(
-            r'-->\s*\|\s*"?([^|\]"]+)"?\s*\]',
+        safe_block = self.re_graph_link_in_node.sub(
             lambda m: (
-                f'-->NODE_{re.sub(r"[^a-zA-Z0-9]", "", m.group(1))[:10]}["{m.group(1)}"]'
+                f'-->NODE_{self.re_non_alnum.sub("", m.group(1))[:10]}["{m.group(1)}"]'
             ),
             safe_block,
         )
 
         lines = safe_block.split("\n")
         cleaned_lines = []
-        reserved_keywords = {
-            "end",
-            "subgraph",
-            "click",
-            "style",
-            "class",
-            "classdef",
-            "linkstyle",
-        }
-
-        def _clean_node_part(work_part: str) -> str:
-            """
-            Cleans individual node definitions within a graph, standardizing syntax and quotes.
-            """
-
-            work_part = work_part.strip()
-            work_part = re.sub(r"(\*\*|__|\*)", "", work_part)
-
-            for opener, closer in [("[", "]"), ("(", ")"), ("{", "}")]:
-                if work_part.endswith(closer) and opener not in work_part:
-                    work_part = work_part[:-1].strip()
-
-            # Handle quoted nodes with internal text
-            if (
-                work_part.startswith('"')
-                and work_part.endswith('"')
-                and len(work_part) > 1
-            ):
-                inner_text = work_part[1:-1].strip()
-                safe_gen_id = "N_" + re.sub(r"[^a-zA-Z0-9]", "", inner_text)[:10]
-                return f'{safe_gen_id}["{inner_text}"]'
-
-            node_match = re.match(r"^([^\[\(\{\>]+?)\s*([\[\(\{\>].*)?$", work_part)
-
-            if node_match:
-                raw_id = node_match.group(1).strip()
-                label_block = node_match.group(2) or ""
-
-                # Handle bracketed label blocks
-                if label_block:
-                    opener = label_block[0]
-                    bracket_map = {"[": "]", "(": ")", "{": "}", ">": "]"}
-
-                    if opener in bracket_map:
-                        expected_closer = bracket_map[opener]
-
-                        if not label_block.endswith(expected_closer):
-                            label_block = (
-                                label_block.rstrip(")]}\"' ") + expected_closer
-                            )
-
-                    # Enforce quotes around inner text to prevent Mermaid parser crashes on '()' or extra spaces
-                    shape_match = re.match(
-                        r"^([\[\(\{\>]+[\/\\]?)\s*[\"']?(.*?)[\"']?\s*([\/\\]?[\]\)\}]+)$",
-                        label_block,
-                    )
-
-                    if shape_match:
-                        open_sym = shape_match.group(1)
-                        inner_txt = shape_match.group(2).replace('"', "'")
-                        close_sym = shape_match.group(3)
-                        label_block = f'{open_sym}"{inner_txt}"{close_sym}'
-
-                # Handle space-separated IDs
-                if not label_block and " " in raw_id:
-                    safe_id = re.sub(r"[^a-zA-Z0-9_]", "", re.sub(r"\s+", "_", raw_id))
-
-                    if safe_id.lower() in reserved_keywords:
-                        safe_id = f"ID_{safe_id}"
-
-                    if not safe_id:
-                        safe_id = "NODE"
-
-                    return f'{safe_id}["{raw_id}"]'
-
-                raw_id = raw_id.replace('"', "")
-                safe_id = re.sub(r"\s+", "_", raw_id)
-                safe_id = re.sub(r"[^a-zA-Z0-9_]", "", safe_id)
-
-                if not safe_id:
-                    safe_id = "NODE"
-
-                if safe_id.lower() in reserved_keywords:
-                    safe_id = f"ID_{safe_id}"
-
-                return safe_id + label_block
-
-            return work_part
 
         for line in lines:
             stripped = line.strip()
@@ -1710,14 +1707,14 @@ class MermaidSanitizer:
                         work_part = work_part[:-1].strip()
 
                     edge_label = ""
-                    m1 = re.match(r'^\|\s*"([^"]+)"\s*\|?(.*)', work_part)
-                    m2 = re.match(r"^\|([^|]+)\|(.*)", work_part)
+                    m1 = self.re_graph_edge_label_quoted.match(work_part)
+                    m2 = self.re_graph_edge_label.match(work_part)
 
                     if m1:
                         clean_inner = m1.group(1).strip()
 
                         if clean_inner:
-                            clean_inner = re.sub(r"(\*\*|__|\*)", "", clean_inner)
+                            clean_inner = self.re_markdown_bold.sub("", clean_inner)
                             edge_label = f'|"{clean_inner}"|'
 
                         work_part = m1.group(2).strip()
@@ -1726,12 +1723,12 @@ class MermaidSanitizer:
                         clean_inner = m2.group(1).strip()
 
                         if clean_inner:
-                            clean_inner = re.sub(r"(\*\*|__|\*)", "", clean_inner)
+                            clean_inner = self.re_markdown_bold.sub("", clean_inner)
                             edge_label = f'|"{clean_inner}"|'
 
                         work_part = m2.group(2).strip()
 
-                    cleaned_node = _clean_node_part(work_part)
+                    cleaned_node = self._clean_graph_node_part(work_part)
                     reconstructed = edge_label + cleaned_node
 
                     if has_semi and i == len(parts) - 1:
@@ -1749,7 +1746,7 @@ class MermaidSanitizer:
             else:
                 has_semi = stripped.endswith(";")
                 work_part = stripped[:-1].strip() if has_semi else stripped
-                cleaned_node = _clean_node_part(work_part)
+                cleaned_node = self._clean_graph_node_part(work_part)
 
                 if has_semi:
                     cleaned_node += ";"
@@ -1757,6 +1754,78 @@ class MermaidSanitizer:
                 cleaned_lines.append(leading_spaces + cleaned_node)
 
         return "\n".join(cleaned_lines)
+
+    def _clean_graph_node_part(self, work_part: str) -> str:
+        """
+        Cleans individual node definitions within a graph, standardizing syntax and quotes.
+        """
+
+        work_part = work_part.strip()
+        work_part = self.re_markdown_bold.sub("", work_part)
+
+        for opener, closer in [("[", "]"), ("(", ")"), ("{", "}")]:
+            if work_part.endswith(closer) and opener not in work_part:
+                work_part = work_part[:-1].strip()
+
+        # Handle quoted nodes with internal text
+        if work_part.startswith('"') and work_part.endswith('"') and len(work_part) > 1:
+            inner_text = work_part[1:-1].strip()
+            safe_gen_id = "N_" + self.re_non_alnum.sub("", inner_text)[:10]
+            return f'{safe_gen_id}["{inner_text}"]'
+
+        node_match = self.re_graph_node_match.match(work_part)
+
+        if node_match:
+            raw_id = node_match.group(1).strip()
+            label_block = node_match.group(2) or ""
+
+            # Handle bracketed label blocks
+            if label_block:
+                opener = label_block[0]
+                bracket_map = {"[": "]", "(": ")", "{": "}", ">": "]"}
+
+                if opener in bracket_map:
+                    expected_closer = bracket_map[opener]
+
+                    if not label_block.endswith(expected_closer):
+                        label_block = label_block.rstrip(")]}\"' ") + expected_closer
+
+                # Enforce quotes around inner text to prevent Mermaid parser crashes on '()' or extra spaces
+                shape_match = self.re_graph_shape_match.match(label_block)
+
+                if shape_match:
+                    open_sym = shape_match.group(1)
+                    inner_txt = shape_match.group(2).replace('"', "'")
+                    close_sym = shape_match.group(3)
+                    label_block = f'{open_sym}"{inner_txt}"{close_sym}'
+
+            # Handle space-separated IDs
+            if not label_block and " " in raw_id:
+                safe_id = self.re_non_alnum_underscore.sub(
+                    "", self.re_whitespace.sub("_", raw_id)
+                )
+
+                if safe_id.lower() in self.reserved_keywords:
+                    safe_id = f"ID_{safe_id}"
+
+                if not safe_id:
+                    safe_id = "NODE"
+
+                return f'{safe_id}["{raw_id}"]'
+
+            raw_id = raw_id.replace('"', "")
+            safe_id = self.re_whitespace.sub("_", raw_id)
+            safe_id = self.re_non_alnum_underscore.sub("", safe_id)
+
+            if not safe_id:
+                safe_id = "NODE"
+
+            if safe_id.lower() in self.reserved_keywords:
+                safe_id = f"ID_{safe_id}"
+
+            return safe_id + label_block
+
+        return work_part
 
 
 # --- END MERMAID SANITIZER CLASS ---
@@ -1776,6 +1845,17 @@ class TemplateSanitizer:
             flags=re.MULTILINE | re.UNICODE,
         )
 
+        # Fix: Key Takeaways Header Normalization
+        self.re_takeaways_check = re.compile(r"---\s+### 📌 Key Takeaways")
+
+        # Fix: Hybrid Tables (Markdown wrapped in HTML <table>)
+        self.re_table_tag = re.compile(r"</?table>", re.IGNORECASE)
+
+        # Fix: Horizontal Rule Spacing
+        self.re_hr_spacing = re.compile(
+            r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*", flags=re.MULTILINE
+        )
+
     def sanitize_stream(self, buffer: str) -> str:
         """
         Analyzes the rolling buffer and applies fixes like Emoji correction.
@@ -1785,7 +1865,7 @@ class TemplateSanitizer:
         # Matches: "## Key Takeaways", "### 📚 Key Takeaways", etc.
         if "Key Takeaways" in buffer:
             # Idempotency check: if strictly correct format exists, skip to avoid loops
-            if "\n---\n### 📌 Key Takeaways" in buffer:
+            if self.re_takeaways_check.search(buffer):
                 return buffer
 
             buffer = self.takeaways_pattern.sub(
@@ -1796,9 +1876,242 @@ class TemplateSanitizer:
         # Fix: Hybrid Tables (Markdown wrapped in HTML <table>)
         # We strip <table> tags to let the Markdown renderer handle the content natively.
         if "table>" in buffer.lower():
-            buffer = re.sub(r"</?table>", "", buffer, flags=re.IGNORECASE)
+            buffer = self.re_table_tag.sub("", buffer)
+
+        # Fix: Horizontal Rule Spacing
+        # Ensure '---' is surrounded by empty lines to prevent it from attaching to text
+        if "---" in buffer:
+            buffer = self.re_hr_spacing.sub(
+                "\n\n---\n\n",
+                buffer,
+            )
 
         return buffer
+
+
+class StreamState:
+    """
+    Holds the state for a single stream session.
+    Pure data class for portability.
+    """
+
+    def __init__(self):
+        self.full_text = ""
+        self.is_inside = False
+        self.is_fake_table = False
+        self.pending_tag = ""
+        self.buffer = ""
+        self.out_buffer = ""
+        self.bypass = False
+
+
+class MermaidStreamProcessor:
+    """
+    A portable State Machine for detecting and sanitizing Mermaid diagrams in a text stream.
+    Decoupled from Open WebUI and EasyBrief specific logic via dependency injection.
+    """
+
+    def __init__(
+        self,
+        state: StreamState,
+        mermaid_sanitizer: MermaidSanitizer,
+        template_sanitizer_fn: callable = None,
+        debug_service: Any = None,
+    ):
+        self.state = state
+        self.mermaid = mermaid_sanitizer
+        self.sanitize_text = template_sanitizer_fn or (lambda x: x)
+        self.debug = debug_service
+
+        # Regex for block detection
+        self.re_mermaid_block_start = re.compile(r"```\s*mermaid", re.IGNORECASE)
+        self.re_block_closure = re.compile(
+            r"^[ \t]*(?:---|___|\*\*\*)[ \t]*$|^##+\s", re.MULTILINE
+        )
+        self.re_table_check = re.compile(r"^\s*table\s*|^\|", re.IGNORECASE)
+        self.re_hr_cleanup = re.compile(
+            r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*", re.MULTILINE
+        )
+        self.re_keyword_cleanup = re.compile(r"^\s*table\s*", re.IGNORECASE)
+        self.re_legacy_table = re.compile(r"\[table\]", re.IGNORECASE)
+
+        self.re_diagram_keywords = re.compile(
+            r"(?i)\[(mermaid|pie|graph(?:\s+[a-z]+)?|flowchart(?:\s+[a-z]+)?|mindmap|gantt|erdiagram|classdiagram|sequencediagram|statediagram(?:-v2)?|journey|timeline)(?:\]|\s)\s*"
+        )
+
+    def process(self, content: str, finish_reason: Any, valves: Any) -> str:
+        """
+        Process a chunk of text, update state, and return the sanitized chunk.
+        """
+        s = self.state
+
+        # Update global memory
+        s.full_text += content
+
+        # Output chunk accumulator
+        output_chunk = ""
+
+        # --- STATE MACHINE ---
+        if s.is_inside:
+            # === INSIDE MERMAID BLOCK ===
+            s.buffer += content
+
+            # --- LATE BINDING CHECK ---
+            if s.pending_tag:
+                stripped_buf = s.buffer.strip()
+
+                # 1. Fake Table Detection
+                if self.re_table_check.match(stripped_buf):
+                    s.is_fake_table = True
+                    s.pending_tag = ""  # Discard tag
+
+                # 2. Insufficient content -> Wait
+                elif len(stripped_buf) < 6 and not finish_reason:
+                    return ""
+
+                # 3. Valid Mermaid
+                else:
+                    output_chunk = s.pending_tag
+                    s.pending_tag = ""  # Tag emitted
+
+            # Handle implicit block closures
+            if "```" not in s.buffer:
+                match = self.re_block_closure.search(s.buffer)
+                if match:
+                    idx = match.start()
+                    s.buffer = s.buffer[:idx] + "\n```\n\n" + s.buffer[idx:]
+
+            # Check exit condition
+            if "```" in s.buffer or finish_reason:
+                s.is_inside = False
+
+                if "```" in s.buffer:
+                    parts = s.buffer.split("```", 1)
+                    raw_mermaid = parts[0]
+                    remainder = parts[1] if len(parts) > 1 else ""
+                else:
+                    raw_mermaid = s.buffer
+                    remainder = ""
+
+                    # Safety cut
+                    match = self.re_block_closure.search(raw_mermaid)
+                    if match:
+                        idx = match.start()
+                        remainder = raw_mermaid[idx:]
+                        raw_mermaid = raw_mermaid[:idx]
+
+                # Fix separator spacing for remainder
+                remainder = remainder.lstrip()
+                remainder = self.re_hr_cleanup.sub("\n\n---\n\n", remainder)
+
+                # === OUTPUT GENERATION ===
+                if s.is_fake_table:
+                    # Markdown table: clean 'table' keyword if present
+                    table_content = self.re_keyword_cleanup.sub("", raw_mermaid).strip()
+                    output_chunk += table_content + "\n\n" + remainder
+                    s.is_fake_table = False
+
+                else:
+                    # Mermaid Sanitization
+                    sanitized = self.mermaid._sanitize_mermaid(raw_mermaid, valves)
+
+                    # Add badge if modified
+                    if sanitized.strip() != raw_mermaid.strip():
+                        if self.debug:
+                            self.debug.log(
+                                f"Mermaid Sanitized! Original:\n{raw_mermaid}\nFixed:\n{sanitized}"
+                            )
+                        sanitized = (
+                            "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n" + sanitized
+                        )
+
+                    output_chunk += sanitized + "\n```\n\n" + remainder
+
+                s.buffer = ""
+                s.out_buffer = ""
+
+            else:
+                # Block still open, suppress output unless we already emitted pending tag
+                if output_chunk:
+                    return output_chunk
+                return ""
+
+        else:
+            # === OUTSIDE (NORMAL TEXT) ===
+            s.out_buffer += content
+
+            # Generalize Mermaid diagram markers (e.g. [graph TD])
+            def _mermaid_repl(m):
+                raw_type = m.group(1).strip().lower()
+                if raw_type == "mermaid":
+                    return "\n```mermaid\n"
+
+                # Default mapping
+                diagram_type = raw_type
+
+                # Specific mappings
+                if "graph" in raw_type:
+                    diagram_type = "graph TD"
+                if "flowchart" in raw_type:
+                    diagram_type = "flowchart TD"
+                if "pie" in raw_type:
+                    diagram_type = "pie"
+                if "mindmap" in raw_type:
+                    diagram_type = "mindmap"
+                if "gantt" in raw_type:
+                    diagram_type = "gantt"
+                if "erdiagram" in raw_type:
+                    diagram_type = "erDiagram"
+
+                return f"\n```mermaid\n{diagram_type}\n"
+
+            # Use regex from init
+            s.out_buffer = self.re_diagram_keywords.sub(_mermaid_repl, s.out_buffer)
+
+            # Check for Mermaid block entry
+            match = self.re_mermaid_block_start.search(s.out_buffer)
+
+            if match:
+                start, end = match.span()
+                pre_block = s.out_buffer[:start]
+                mermaid_start = s.out_buffer[end:]
+
+                # Sanitize pre-block
+                sanitized_pre = self.sanitize_text(pre_block)
+                sanitized_pre = self.re_legacy_table.sub("", sanitized_pre)
+
+                if sanitized_pre and not sanitized_pre.endswith("\n"):
+                    sanitized_pre += "\n"
+
+                # LATE BINDING: Store tag
+                output_chunk = sanitized_pre
+                s.pending_tag = "```mermaid"
+
+                # Switch state
+                s.is_inside = True
+                s.is_fake_table = False
+                s.buffer = mermaid_start
+                s.out_buffer = ""
+
+            else:
+                # Rolling Buffer Logic
+                s.out_buffer = self.sanitize_text(s.out_buffer)
+
+                KEEP_CHARS = 30
+                if len(s.out_buffer) > KEEP_CHARS * 2 or finish_reason:
+                    if finish_reason:
+                        to_flush = s.out_buffer
+                        s.out_buffer = ""
+                    else:
+                        to_flush = s.out_buffer[:-KEEP_CHARS]
+                        s.out_buffer = s.out_buffer[-KEEP_CHARS:]
+
+                    to_flush = self.re_legacy_table.sub("", to_flush)
+                    output_chunk = to_flush
+                else:
+                    output_chunk = ""
+
+        return output_chunk
 
 
 class Filter:
@@ -1892,7 +2205,7 @@ class Filter:
             description="Creativity control (Lower = More precise syntax). Default: 0.15",
         )
         top_p: float = Field(
-            default=0.8,
+            default=0.2,
             ge=0.1,
             le=1.0,
             description="Vocabulary filter (Lower = More focused). Default: 0.8",
@@ -1915,7 +2228,7 @@ class Filter:
         """
 
         self.valves, self.user_valves = self.Valves(), self.UserValves()
-        self.sessions = {}
+        self.processors = {}
         self.mermaid_sanitizer = MermaidSanitizer()
         self.template_sanitizer = TemplateSanitizer()
         self.request = self.debug = self.net = self.em = self.ctx = None
@@ -1966,8 +2279,15 @@ class Filter:
         user_id = __user__.get("id", "default") if __user__ else "default"
 
         if not parsed:
-            if user_id in self.sessions:
-                self.sessions[user_id]["bypass"] = True
+            # Create a bypass processor if not already present
+            if user_id not in self.processors:
+                state = StreamState()
+                state.bypass = True
+                self.processors[user_id] = MermaidStreamProcessor(
+                    state, self.mermaid_sanitizer, None, None
+                )
+            else:
+                self.processors[user_id].state.bypass = True
             return body
 
         # Phase 2: Initialization
@@ -1979,13 +2299,13 @@ class Filter:
         )
 
         # Activate MITM Stream Session
-        self.sessions[user_id] = {
-            "full_text": "",
-            "is_inside": False,
-            "buffer": "",
-            "out_buffer": "",
-            "bypass": False,
-        }
+        state = StreamState()
+        self.processors[user_id] = MermaidStreamProcessor(
+            state=state,
+            mermaid_sanitizer=self.mermaid_sanitizer,
+            template_sanitizer_fn=self.template_sanitizer.sanitize_stream,
+            debug_service=self.debug,
+        )
 
         if TRACE:
             self.debug.dump(body, "Body")
@@ -2144,34 +2464,34 @@ class Filter:
 
     async def stream(self, event: dict, __user__: Optional[dict] = None) -> dict:
         """
-        Man-in-the-Middle implementation for real-time Mermaid sanitization.
-        Uses buffering and streaming to correct diagram syntax errors on-the-fly.
+        Man-in-the-Middle implementation using MermaidStreamProcessor.
         """
-
         # Safely retrieve UserValves
         uv_data = __user__.get("valves", {}) if __user__ else {}
         valves = self.UserValves(**uv_data) if isinstance(uv_data, dict) else uv_data
 
         user_id = __user__.get("id", "default") if __user__ else "default"
 
-        # Setup safety session - same pattern as mermaid-doctor
-        if user_id not in self.sessions:
-            self.sessions[user_id] = {
-                "full_text": "",
-                "is_inside": False,
-                "buffer": "",
-                "out_buffer": "",
-                "bypass": True,
-            }
+        # Auto-recover processor if missing (e.g. server restart during stream)
+        if user_id not in self.processors:
+            state = StreamState()
+            state.bypass = (
+                True  # Default to bypass for safety if not initialized via inlet
+            )
+            self.processors[user_id] = MermaidStreamProcessor(
+                state=state,
+                mermaid_sanitizer=self.mermaid_sanitizer,
+                template_sanitizer_fn=self.template_sanitizer.sanitize_stream,
+                debug_service=self.debug,
+            )
 
-        session = self.sessions[user_id]
+        processor = self.processors[user_id]
 
-        # O(1) Non-invasive passthrough if bypass is active
-        if session["bypass"]:
+        # Fast bypass
+        if processor.state.bypass:
             return event
 
         choices = event.get("choices", [])
-
         if not choices:
             return event
 
@@ -2183,190 +2503,11 @@ class Filter:
         if not content and not finish_reason:
             return event
 
-        # 1. Update the global response memory
-        session["full_text"] += content
+        # Delegate to Processor
+        new_content = processor.process(content, finish_reason, valves)
 
-        # --- STATE MACHINE ---
-        if session["is_inside"]:
-            # === INSIDE MERMAID BLOCK ===
-            session["buffer"] += content
-
-            # Handle implicit block closures (LLM hallucinated end)
-            if "```" not in session["buffer"]:
-                match = re.search(
-                    r"^[ \t]*(?:---|___|\*\*\*)[ \t]*$|^##+\s",
-                    session["buffer"],
-                    flags=re.MULTILINE,
-                )
-                if match:
-                    idx = match.start()
-                    session["buffer"] = (
-                        session["buffer"][:idx] + "\n```\n\n" + session["buffer"][idx:]
-                    )
-
-            # Check if we exited the block or stream ended
-            if "```" in session["buffer"] or finish_reason:
-                session["is_inside"] = False
-
-                if "```" in session["buffer"]:
-                    parts = session["buffer"].split("```", 1)
-                    raw_mermaid = parts[0]
-                    remainder = parts[1] if len(parts) > 1 else ""
-                else:
-                    raw_mermaid = session["buffer"]
-                    remainder = ""
-
-                    # Safety cut if implicit closure missed it during chunking
-                    safety_match = re.search(
-                        r"^[ \t]*(?:---|___|\*\*\*)[ \t]*$|^##+\s",
-                        raw_mermaid,
-                        flags=re.MULTILINE,
-                    )
-                    if safety_match:
-                        idx = safety_match.start()
-                        remainder = raw_mermaid[idx:]
-                        raw_mermaid = raw_mermaid[:idx]
-
-                # Fix separator spacing for remainder
-                remainder = remainder.lstrip()
-                remainder = re.sub(
-                    r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*",
-                    "\n\n---\n\n",
-                    remainder,
-                    flags=re.MULTILINE,
-                )
-
-                # Detect and fix "Fake Mermaid Tables" (Markdown tables wrapped in mermaid blocks)
-                stripped_mermaid = raw_mermaid.strip()
-                if stripped_mermaid.lower().startswith(
-                    "table"
-                ) or stripped_mermaid.startswith("|"):
-                    # Extract the table content, removing the 'table' keyword if present
-                    table_content = re.sub(
-                        r"^\s*table\s*", "", raw_mermaid, flags=re.IGNORECASE
-                    ).strip()
-
-                    # Output as raw Markdown (no mermaid wrapper)
-                    delta["content"] = table_content + "\n\n" + remainder
-
-                else:
-                    # Use dedicated MermaidSanitizer for sanitization
-                    sanitized = self.mermaid_sanitizer._sanitize_mermaid(
-                        raw_mermaid, valves
-                    )
-
-                    # Add badge if changes were made
-                    if sanitized.strip() != raw_mermaid.strip():
-                        if self.debug:
-                            self.debug.log(
-                                f"Mermaid Sanitized! Original:\n{raw_mermaid}\nFixed:\n{sanitized}"
-                            )
-
-                        sanitized = (
-                            "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n" + sanitized
-                        )
-
-                    delta["content"] = sanitized + "\n```\n\n" + remainder
-
-                session["buffer"] = ""
-                session["out_buffer"] = ""
-
-            else:
-                # Block is still open, suppress content
-                delta["content"] = ""
-
-        else:
-            # === OUTSIDE (NORMAL TEXT) ===
-            session["out_buffer"] += content
-
-            # Generalize Mermaid diagram marker transformation
-            def _mermaid_repl(m):
-                raw_type = m.group(1).strip().lower()
-                if raw_type == "mermaid":
-                    return "\n```mermaid\n"
-
-                diagram_map = {
-                    "pie": "pie",
-                    "graph": "graph TD",
-                    "graph td": "graph TD",
-                    "graph lr": "graph LR",
-                    "flowchart": "flowchart TD",
-                    "flowchart td": "flowchart TD",
-                    "flowchart lr": "flowchart LR",
-                    "mindmap": "mindmap",
-                    "gantt": "gantt",
-                    "erdiagram": "erDiagram",
-                    "classdiagram": "classDiagram",
-                    "sequencediagram": "sequenceDiagram",
-                    "statediagram": "stateDiagram",
-                    "statediagram-v2": "stateDiagram-v2",
-                    "journey": "journey",
-                    "timeline": "timeline",
-                }
-                diagram_type = diagram_map.get(raw_type, m.group(1).strip())
-                return f"\n```mermaid\n{diagram_type}\n"
-
-            session["out_buffer"] = re.sub(
-                r"(?i)\[(mermaid|pie|graph(?:\s+[a-z]+)?|flowchart(?:\s+[a-z]+)?|mindmap|gantt|erdiagram|classdiagram|sequencediagram|statediagram(?:-v2)?|journey|timeline)\]\s*",
-                _mermaid_repl,
-                session["out_buffer"],
-            )
-
-            # Check for Mermaid block entry (robust regex)
-            # We look for ```mermaid or ``` mermaid
-            match = re.search(
-                r"```\s*mermaid", session["out_buffer"], flags=re.IGNORECASE
-            )
-
-            if match:
-                start, end = match.span()
-                pre_block = session["out_buffer"][:start]
-                mermaid_start = session["out_buffer"][end:]
-
-                # Sanitize and flush the pre-block content
-                sanitized_pre = self.template_sanitizer.sanitize_stream(pre_block)
-                # Apply legacy table patch
-                sanitized_pre = re.sub(
-                    r"\[table\]", "", sanitized_pre, flags=re.IGNORECASE
-                )
-
-                # Ensure safe newline before code block
-                if sanitized_pre and not sanitized_pre.endswith("\n"):
-                    sanitized_pre += "\n"
-
-                delta["content"] = sanitized_pre + "```mermaid"
-
-                # Switch state to INSIDE
-                session["is_inside"] = True
-                session["buffer"] = mermaid_start
-                session["out_buffer"] = ""
-
-            else:
-                # Rolling Buffer Logic for Template Sanitization
-                # We sanitize the entire buffer to catch patterns like '### 📝 Key Takeaways'
-                session["out_buffer"] = self.template_sanitizer.sanitize_stream(
-                    session["out_buffer"]
-                )
-
-                # Flush logic: Keep last N chars to allow pattern matching across chunks
-                # unless stream is finishing
-                KEEP_CHARS = 30
-
-                if len(session["out_buffer"]) > KEEP_CHARS * 2 or finish_reason:
-                    if finish_reason:
-                        to_flush = session["out_buffer"]
-                        session["out_buffer"] = ""
-                    else:
-                        to_flush = session["out_buffer"][:-KEEP_CHARS]
-                        session["out_buffer"] = session["out_buffer"][-KEEP_CHARS:]
-
-                    # Apply legacy table patch
-                    to_flush = re.sub(r"\[table\]", "", to_flush, flags=re.IGNORECASE)
-
-                    delta["content"] = to_flush
-                else:
-                    # Buffer too small, suppress output
-                    delta["content"] = ""
+        # Update Delta
+        delta["content"] = new_content
 
         return event
 
