@@ -1,6 +1,6 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.13
+version: 0.5.14
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
@@ -69,7 +69,8 @@ Aim for maximum information density within the target length.
 
 # Key Takeaways Block Template
 MOD_TAKEAWAYS = """
-End your response with only one text block. Use exactly this template (you MUST use the 📌 emoji):
+End your response with only one text block. Use EXACTLY this template (you MUST use the 📌 emoji and a H3 heading):
+---
 ### 📌 Key Takeaways
 > - Your label: Description.
 > - Your label: Description.
@@ -80,7 +81,11 @@ Closing rules:
 - Up to 8 bullets
 """
 
-DEFAULT_REPEAT_RULE = "Analyze each Main Topic found in text:"
+DEFAULT_REPEAT_RULE = """
+IDENTIFY 3 to 5 Main Topics in the text.
+FOR EACH TOPIC, output a block using EXACTLY this pattern:
+CRITICAL: Do NOT output 'Key Takeaways' inside this loop. Takeaways must appear ONLY ONCE at the very end of the response.
+"""
 
 # Query Generation Template for LLM
 QUERY_GENERATION_TEMPLATE = """### Task:
@@ -145,7 +150,8 @@ mindmap
         "rule": "IF sequential process/flow/decision exists → USE Mermaid graph TD. ELSE skip.",
         "syntax": """**Flowcharts**: Mermaid `graph TD`.
     RULES:
-    1. Nodes Syntax: `ID("Text")`, `ID["Text"]`, `ID{"Text"}`.
+    0. Act as a Mermaid.js Expert. First outline the process steps mentally, then generate code.
+    1. Nodes Syntax: Use SHORT IDs (A, B, C...) with descriptive labels `A["Text"]`, `B("Text")`.
     2. Node labels must be enclosed in double quotes.
     2. Connectors Label EXACT Syntax: `|"Label"|` (use pipes before and after the label text)
     3. Connectors Syntax: `ID1 -->|"Label"| ID2` (No spaces between pipes and arrows).
@@ -170,14 +176,16 @@ graph TD
     """,
     },
     "pie": {
-        "rule": "IF data represents parts of a whole (e.g. Market Share) → USE Mermaid pie. ELSE skip.",
+        "rule": "SKIP Mermaid PIE if source text does not explicitly contains proportional data (percentages, market share).",
         "syntax": """**Pie Charts**: Mermaid `pie`.
     RULES:
-    1. MANDATORY CHECK: Does the data represent a "Market Share" or "Distribution"? If NOT, output nothing for this visual section.
-    2. CRITICAL: NO percentage symbol `%`. Use ONLY raw numbers (e.g. `"Label" : 40`).
-    3. CRITICAL: NO parentheses `()` in title.
-    4. Always specify the code-block type: ```mermaid.
-    5. Follow EXACTLY the syntax of the provided one-shot:
+    1. MANDATORY CHECK: Does the source text contain explicit numbers representing a "Market Share", "Budget" or "Distribution"? If NO, output nothing.
+    2. FORBIDDEN: Do NOT generate a pie chart for lists of concepts (e.g., "Risks", "Consequences", "Benefits") unless specific percentages are provided in the text.
+    3. WARNING: DO NOT INVENT DATA. If percentages are missing, SKIP this chart.
+    4. CRITICAL: NO percentage symbol `%`. Use ONLY raw numbers (e.g. `"Label" : 40`).
+    5. CRITICAL: NO parentheses `()` in title.
+    6. Always specify the code-block type: ```mermaid.
+    7. Follow EXACTLY the syntax of the provided one-shot:
 ```mermaid
 pie
     title Key Distribution
@@ -185,7 +193,7 @@ pie
     "Category B" : 35
     "Category C" : 25
 ```\n\n
-    6. MENTALLY VERIFY: If the data does not strictly fit these rules, DO NOT generate the chart.
+    8. MENTALLY VERIFY: If the data is not in the source text, DO NOT generate the chart.
     """,
     },
 }
@@ -216,8 +224,8 @@ PROMPT_CONFIG = {
     },
     "brief": {
         "action": "Generate a Structured Executive Report.",
-        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n[Select the best visual format from the ALLOWED list below.]",
-        "visuals": ["table", "mindmap", "pie", "graph"],
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n(Do NOT generate separate headers for Concept/Insight).\n[Select the best visual format from the ALLOWED list below.]",
+        "visuals": ["table", "mindmap", "graph", "pie"],
         "repeat_rule": DEFAULT_REPEAT_RULE,
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Concept Synthesis**: [Text...]
@@ -226,8 +234,8 @@ PROMPT_CONFIG = {
     # Fallback for compact models (Graph removed for stability)
     "simple_brief": {
         "action": "Generate a Structured Executive Report.",
-        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n[Select the best visual format from the ALLOWED list below.]",
-        "visuals": ["table", "mindmap", "pie"],
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n(Do NOT generate separate headers for Concept/Insight).\n[Select the best visual format from the ALLOWED list below.]",
+        "visuals": ["table"],
         "repeat_rule": DEFAULT_REPEAT_RULE,
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Concept Synthesis**: [Text...]
@@ -237,27 +245,44 @@ PROMPT_CONFIG = {
 
 # The Master System Prompt
 MASTER_PROMPT = f"""
-[SYSTEM]
+<SYSTEM>
 Role: Analyst. Task: {{ACTION_TYPE}}
 Mode: Silent.
-[LANGUAGE]
+</SYSTEM>
+
+<WORKFLOW>
+1. GENERATE Executive Summary.
+2. ANALYZE Main Topics (Loop).
+3. GENERATE Key Takeaways.
+</WORKFLOW>
+
+<LANGUAGE>
 {{LANGUAGE_INSTRUCTION}}
-[STRUCTURE]
+</LANGUAGE>
+
+<TEMPLATE STRUCTURE>
 {{SUMMARY_BLOCK}}
 ---
 {{REPEAT_RULE}}
 ---
 {{STRUCTURE_BLOCK}}
-[CLOSING]
-{MOD_TAKEAWAYS}
-[VISUALS]
+</TEMPLATE STRUCTURE>
+
+<VISUALS RULES>
 **Status**:
 ALLOWED: {{ALLOWED_VISUALS_LIST}}
 **Guidelines**:
 {{VISUAL_GUIDELINES}}
 {{VISUAL_SYNTAX}}
-[TEMPLATE]
+</VISUALS RULES>
+
+<CLOSING>
+{MOD_TAKEAWAYS}
+</CLOSING>
+
+<TEMPLATE>
 {{EXAMPLE_BLOCK}}
+</TEMPLATE>
 """
 
 
@@ -1001,6 +1026,10 @@ class DebugService:
 
         output_logs = getattr(self.ctx, "output_content", "")
 
+        # Only show debug block if there is actual content and debug is enabled
+        if state_json == "{}" and not output_logs:
+            return ""
+
         return (
             f"\n\n<details>\n"
             f"<summary>🔍 {APP_NAME} Debug</summary>\n\n"
@@ -1032,23 +1061,23 @@ class MermaidSanitizer:
 
         # Route to specific sanitizers based on graph type
         if "mindmap" in code_lower:
-            code = self._sterilize_mindmap(code)
+            code = self._sanitize_mindmap(code)
 
         elif "graph " in code_lower:
-            code = self._sterilize_graph(code, valves)
+            code = self._sanitize_graph(code, valves)
 
         elif "erdiagram" in code_lower:
-            code = self._sterilize_er(code)
+            code = self._sanitize_er(code)
 
         elif "pie" in code_lower:
-            code = self._sterilize_pie(code)
+            code = self._sanitize_pie(code)
 
         elif "gantt" in code_lower:
-            code = self._sterilize_gantt(code)
+            code = self._sanitize_gantt(code)
 
         return "\n" + code + "\n"
 
-    def _sterilize_gantt(self, block: str) -> str:
+    def _sanitize_gantt(self, block: str) -> str:
         """
         Fixes Gantt charts corrupted by micromodels.
         Completely reassembles Task lines to ensure correct Mermaid parsing logic:
@@ -1214,7 +1243,7 @@ class MermaidSanitizer:
 
         return "\n".join(cleaned_lines)
 
-    def _sterilize_pie(self, block: str) -> str:
+    def _sanitize_pie(self, block: str) -> str:
         """
         Fixes Pie charts corrupted by syntax hallucinations.
         Converts assignment operators '=' to ':' and extracts labels
@@ -1260,7 +1289,7 @@ class MermaidSanitizer:
 
         return "\n".join(cleaned_lines)
 
-    def _sterilize_er(self, block: str) -> str:
+    def _sanitize_er(self, block: str) -> str:
         """
         Fixes ER diagrams corrupted by 'graph' syntax hallucinations,
         UML class syntax hallucinations, glued relationships, and relationships
@@ -1428,7 +1457,7 @@ class MermaidSanitizer:
 
         return "\n".join(cleaned_lines)
 
-    def _sterilize_mindmap(self, block: str) -> str:
+    def _sanitize_mindmap(self, block: str) -> str:
         """
         Smart sanitizer for Mermaid mindmaps.
         """
@@ -1504,7 +1533,7 @@ class MermaidSanitizer:
 
         return "\n".join(cleaned_lines)
 
-    def _sterilize_graph(self, block: str, valves: BaseModel) -> str:
+    def _sanitize_graph(self, block: str, valves: BaseModel) -> str:
         """
         Fixes common trailing character hallucinations, space-in-ID issues,
         naked quoted nodes, and style stripping.
@@ -1519,6 +1548,20 @@ class MermaidSanitizer:
 
         safe_block = re.sub(r'(\["[^"\]]+"\])\)', r"\1", block)
         safe_block = re.sub(r'(\("[^"\)]+"\))\]', r"\1", safe_block)
+
+        # Fix: "CYLINDEREND" parsing error.
+        # When a node label ends with `)`, e.g., `["Text (Example)"]`, Mermaid parser
+        # might confuse `)]` with the end of a cylinder `[(...)]`.
+        # We inject a space to break the sequence: `["Text (Example) "]`.
+        safe_block = re.sub(r'\(([^)]+)\)"\]', r"(\1) \"]", safe_block)
+
+        # Fix: Remove structural characters (--> and |) from inside node labels [...]
+        # This prevents parser confusion when models put links inside nodes.
+        safe_block = re.sub(
+            r"\[(.*?)\]",
+            lambda m: f"[{m.group(1).replace('-->', ' ').replace('|', ' ')}]",
+            safe_block,
+        )
 
         safe_block = re.sub(
             r'-->\s*\|\s*"?([^|\]"]+)"?\s*\]',
@@ -1719,6 +1762,45 @@ class MermaidSanitizer:
 # --- END MERMAID SANITIZER CLASS ---
 
 
+class TemplateSanitizer:
+    """
+    Handles EasyBrief specific template cleanup and enforcement logic.
+    Separated from MermaidSanitizer to maintain portability.
+    """
+
+    def __init__(self):
+        # Compile regex for Key Takeaways normalization
+        # Matches: Empty headers (##) before Key Takeaways, then Key Takeaways header
+        self.takeaways_pattern = re.compile(
+            r"(?:^|\n)(?:\s*#+\s*\n)*\s*#+\s*(?:[^\w\s]+)?\s*Key Takeaways",
+            flags=re.MULTILINE | re.UNICODE,
+        )
+
+    def sanitize_stream(self, buffer: str) -> str:
+        """
+        Analyzes the rolling buffer and applies fixes like Emoji correction.
+        """
+        # Fix: Key Takeaways Header Normalization
+        # Force H3 level (###) and the correct emoji (📌) regardless of model output.
+        # Matches: "## Key Takeaways", "### 📚 Key Takeaways", etc.
+        if "Key Takeaways" in buffer:
+            # Idempotency check: if strictly correct format exists, skip to avoid loops
+            if "\n---\n### 📌 Key Takeaways" in buffer:
+                return buffer
+
+            buffer = self.takeaways_pattern.sub(
+                "\n\n---\n### 📌 Key Takeaways",
+                buffer,
+            )
+
+        # Fix: Hybrid Tables (Markdown wrapped in HTML <table>)
+        # We strip <table> tags to let the Markdown renderer handle the content natively.
+        if "table>" in buffer.lower():
+            buffer = re.sub(r"</?table>", "", buffer, flags=re.IGNORECASE)
+
+        return buffer
+
+
 class Filter:
     class Valves(BaseModel):
         search_prefix: str = Field(
@@ -1835,6 +1917,7 @@ class Filter:
         self.valves, self.user_valves = self.Valves(), self.UserValves()
         self.sessions = {}
         self.mermaid_sanitizer = MermaidSanitizer()
+        self.template_sanitizer = TemplateSanitizer()
         self.request = self.debug = self.net = self.em = self.ctx = None
         self.output_content = ""
 
@@ -2103,11 +2186,12 @@ class Filter:
         # 1. Update the global response memory
         session["full_text"] += content
 
-        # --- STATE TRANSITION MANAGEMENT ---
+        # --- STATE MACHINE ---
         if session["is_inside"]:
+            # === INSIDE MERMAID BLOCK ===
             session["buffer"] += content
 
-            # Implicit block closure if the LLM hallucinated the end of the block and started a new section
+            # Handle implicit block closures (LLM hallucinated end)
             if "```" not in session["buffer"]:
                 match = re.search(
                     r"^[ \t]*(?:---|___|\*\*\*)[ \t]*$|^##+\s",
@@ -2143,18 +2227,6 @@ class Filter:
                         remainder = raw_mermaid[idx:]
                         raw_mermaid = raw_mermaid[:idx]
 
-                # Use dedicated MermaidSanitizer for sanitization
-                sanitized = self.mermaid_sanitizer._sanitize_mermaid(
-                    raw_mermaid, valves
-                )
-
-                # Check if the code was actually changed by the Doctor
-                # We strip newlines/spaces for a fair comparison of the core logic
-                if sanitized.strip() != raw_mermaid.strip():
-                    sanitized = (
-                        "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n" + sanitized
-                    )
-
                 # Fix separator spacing for remainder
                 remainder = remainder.lstrip()
                 remainder = re.sub(
@@ -2164,25 +2236,48 @@ class Filter:
                     flags=re.MULTILINE,
                 )
 
-                choice["delta"]["content"] = sanitized + "\n```\n\n" + remainder
+                # Detect and fix "Fake Mermaid Tables" (Markdown tables wrapped in mermaid blocks)
+                stripped_mermaid = raw_mermaid.strip()
+                if stripped_mermaid.lower().startswith(
+                    "table"
+                ) or stripped_mermaid.startswith("|"):
+                    # Extract the table content, removing the 'table' keyword if present
+                    table_content = re.sub(
+                        r"^\s*table\s*", "", raw_mermaid, flags=re.IGNORECASE
+                    ).strip()
+
+                    # Output as raw Markdown (no mermaid wrapper)
+                    delta["content"] = table_content + "\n\n" + remainder
+
+                else:
+                    # Use dedicated MermaidSanitizer for sanitization
+                    sanitized = self.mermaid_sanitizer._sanitize_mermaid(
+                        raw_mermaid, valves
+                    )
+
+                    # Add badge if changes were made
+                    if sanitized.strip() != raw_mermaid.strip():
+                        if self.debug:
+                            self.debug.log(
+                                f"Mermaid Sanitized! Original:\n{raw_mermaid}\nFixed:\n{sanitized}"
+                            )
+
+                        sanitized = (
+                            "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n" + sanitized
+                        )
+
+                    delta["content"] = sanitized + "\n```\n\n" + remainder
 
                 session["buffer"] = ""
                 session["out_buffer"] = ""
 
             else:
-                # Block is still open, suppress content (to be replaced by sanitized version)
-                choice["delta"]["content"] = ""
+                # Block is still open, suppress content
+                delta["content"] = ""
 
         else:
+            # === OUTSIDE (NORMAL TEXT) ===
             session["out_buffer"] += content
-
-            # --- MITM HALLUCINATION PATCH ---
-            old_out = session["out_buffer"]
-
-            # Strip [table] marker completely
-            session["out_buffer"] = re.sub(
-                r"(?i)\[table\]\s*", "", session["out_buffer"]
-            )
 
             # Generalize Mermaid diagram marker transformation
             def _mermaid_repl(m):
@@ -2217,93 +2312,61 @@ class Filter:
                 session["out_buffer"],
             )
 
-            # Fix separator spacing (ensure empty lines around ---)
-            session["out_buffer"] = re.sub(
-                r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*",
-                "\n\n---\n\n",
-                session["out_buffer"],
-                flags=re.MULTILINE,
+            # Check for Mermaid block entry (robust regex)
+            # We look for ```mermaid or ``` mermaid
+            match = re.search(
+                r"```\s*mermaid", session["out_buffer"], flags=re.IGNORECASE
             )
 
-            if session["out_buffer"] != old_out:
-                cut_idx = len(session["full_text"]) - len(old_out)
-                session["full_text"] = (
-                    session["full_text"][:cut_idx] + session["out_buffer"]
-                )
-            # --------------------------------
+            if match:
+                start, end = match.span()
+                pre_block = session["out_buffer"][:start]
+                mermaid_start = session["out_buffer"][end:]
 
-            lower_out = session["out_buffer"].lower()
-
-            # TRANSITION A: Entering a Mermaid block
-            if "```mermaid" in lower_out:
-                idx = lower_out.find("```mermaid")
-                before_mermaid = session["out_buffer"][:idx]
-                mermaid_tag = session["out_buffer"][idx : idx + 10]
-                after_mermaid = session["out_buffer"][idx + 10 :]
-
-                global_before = session["full_text"][
-                    : -len(session["out_buffer"]) + idx
-                ]
-
-                # Validate if it's a true block-level tag (starts at the beginning of a line, or after a markdown list marker)
-                line_prefix = (
-                    global_before.split("\n")[-1]
-                    if "\n" in global_before
-                    else global_before
+                # Sanitize and flush the pre-block content
+                sanitized_pre = self.template_sanitizer.sanitize_stream(pre_block)
+                # Apply legacy table patch
+                sanitized_pre = re.sub(
+                    r"\[table\]", "", sanitized_pre, flags=re.IGNORECASE
                 )
 
-                # Allow empty lines or lines with just markdown list markers (e.g., "1. ", "- ", "* ")
-                is_valid_block_start = re.match(
-                    r"^\s*(?:\d+[\.\)]|[\-\*\+])?\s*$", line_prefix
-                )
+                # Ensure safe newline before code block
+                if sanitized_pre and not sanitized_pre.endswith("\n"):
+                    sanitized_pre += "\n"
 
-                # Genuine block: start interception
-                if is_valid_block_start:
-                    # Genuine block: start interception
-                    session["is_inside"] = True
+                delta["content"] = sanitized_pre + "```mermaid"
 
-                    choice["delta"]["content"] = before_mermaid + mermaid_tag + "\n"
-
-                    session["out_buffer"] = ""
-                    session["buffer"] = after_mermaid
-
-                    if finish_reason:
-                        sanitized = self.mermaid_sanitizer._sanitize_mermaid(
-                            session["buffer"], valves
-                        )
-                        if sanitized.strip() != session["buffer"].strip():
-                            sanitized = (
-                                "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n"
-                                + sanitized
-                            )
-
-                        choice["delta"]["content"] += sanitized + "\n```\n"
-                        session["is_inside"] = False
-                        session["buffer"] = ""
-
-                # It's an inline mention (e.g. conversational text). Let it pass cleanly!
-                else:
-                    choice["delta"]["content"] = before_mermaid + mermaid_tag
-                    session["out_buffer"] = after_mermaid
-
-                    if finish_reason:
-                        choice["delta"]["content"] += session["out_buffer"]
-                        session["out_buffer"] = ""
-
-            # Stream ended, flush the remaining buffer
-            elif finish_reason:
-                choice["delta"]["content"] = session["out_buffer"]
+                # Switch state to INSIDE
+                session["is_inside"] = True
+                session["buffer"] = mermaid_start
                 session["out_buffer"] = ""
 
-            # Still outside, hold back the pre-buffer window to avoid un-curable leaks
-            elif len(session["out_buffer"]) > 15:
-                safe_chunk = session["out_buffer"][:-15]
-                session["out_buffer"] = session["out_buffer"][-15:]
-                choice["delta"]["content"] = safe_chunk
-
             else:
-                # Pre-buffer window too small, suppress content
-                choice["delta"]["content"] = ""
+                # Rolling Buffer Logic for Template Sanitization
+                # We sanitize the entire buffer to catch patterns like '### 📝 Key Takeaways'
+                session["out_buffer"] = self.template_sanitizer.sanitize_stream(
+                    session["out_buffer"]
+                )
+
+                # Flush logic: Keep last N chars to allow pattern matching across chunks
+                # unless stream is finishing
+                KEEP_CHARS = 30
+
+                if len(session["out_buffer"]) > KEEP_CHARS * 2 or finish_reason:
+                    if finish_reason:
+                        to_flush = session["out_buffer"]
+                        session["out_buffer"] = ""
+                    else:
+                        to_flush = session["out_buffer"][:-KEEP_CHARS]
+                        session["out_buffer"] = session["out_buffer"][-KEEP_CHARS:]
+
+                    # Apply legacy table patch
+                    to_flush = re.sub(r"\[table\]", "", to_flush, flags=re.IGNORECASE)
+
+                    delta["content"] = to_flush
+                else:
+                    # Buffer too small, suppress output
+                    delta["content"] = ""
 
         return event
 
@@ -2342,10 +2405,7 @@ class Filter:
                 self.debug.log("--- OUTLET COMPLETE ---")  # type: ignore
 
                 # Minimal completion status
-                if self.em and __event_emitter__:
-                    self.em.emitter = __event_emitter__
-                if self.em:
-                    await self.em.emit_status("EasyBrief completed", True)
+                await self.em.emit_status("EasyBrief completed", True)
 
         except Exception as e:
             # Safety net for outlet errors

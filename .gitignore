@@ -2,5 +2,6 @@ ANALYSIS.md
 INSTRUCT.md
 NOTE.md
 res/
+tmp/
 docs/
 __pycache__
