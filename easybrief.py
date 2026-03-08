@@ -1036,13 +1036,72 @@ class DebugService:
         )
 
 
+# --------------------------------------------------------------------
+class TemplateSanitizer:
+    """
+    Handles EasyBrief specific template cleanup and enforcement logic.
+    Separated from MermaidSanitizer to maintain portability.
+    """
+
+    def __init__(self):
+        # Compile regex for Key Takeaways normalization
+        # Matches: Empty headers (##) before Key Takeaways, then Key Takeaways header
+        self.takeaways_pattern = re.compile(
+            r"(?:^|\n)(?:\s*#+\s*\n)*\s*#+\s*(?:[^\w\s]+)?\s*Key Takeaways",
+            flags=re.MULTILINE | re.UNICODE,
+        )
+
+        # Fix: Key Takeaways Header Normalization
+        self.re_takeaways_check = re.compile(r"---\s+### 📌 Key Takeaways")
+
+        # Fix: Hybrid Tables (Markdown wrapped in HTML <table>)
+        self.re_table_tag = re.compile(r"</?table>", re.IGNORECASE)
+
+        # Fix: Horizontal Rule Spacing
+        self.re_hr_spacing = re.compile(
+            r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*", flags=re.MULTILINE
+        )
+
+    def sanitize_stream(self, buffer: str) -> str:
+        """
+        Analyzes the rolling buffer and applies fixes like Emoji correction.
+        """
+        # Fix: Key Takeaways Header Normalization
+        # Force H3 level (###) and the correct emoji (📌) regardless of model output.
+        # Matches: "## Key Takeaways", "### 📚 Key Takeaways", etc.
+        if "Key Takeaways" in buffer:
+            # Idempotency check: if strictly correct format exists, skip to avoid loops
+            if self.re_takeaways_check.search(buffer):
+                return buffer
+
+            buffer = self.takeaways_pattern.sub(
+                "\n\n---\n### 📌 Key Takeaways",
+                buffer,
+            )
+
+        # Fix: Hybrid Tables (Markdown wrapped in HTML <table>)
+        # We strip <table> tags to let the Markdown renderer handle the content natively.
+        if "table>" in buffer.lower():
+            buffer = self.re_table_tag.sub("", buffer)
+
+        # Fix: Horizontal Rule Spacing
+        # Ensure '---' is surrounded by empty lines to prevent it from attaching to text
+        if "---" in buffer:
+            buffer = self.re_hr_spacing.sub(
+                "\n\n---\n\n",
+                buffer,
+            )
+
+        return buffer
+
+
 class MermaidSanitizer:
     """
     Sanitizes and corrects Mermaid diagrams to ensure valid syntax.
     Implements the same logic as mermaid-doctor but in a modular component.
     """
 
-    SANITIZER_VERSION = "2.0.3"
+    SANITIZER_VERSION = "2.0.7"
 
     def __init__(self):
         # Common
@@ -1076,6 +1135,7 @@ class MermaidSanitizer:
         self.re_er_mixed_rel_fix = re.compile(
             r"([A-Za-z0-9_]+)\s*(?:[\}o\|]*--[\}o\|]*\.\.[\}o\|]*|[\}o\|]*\.\.[\}o\|]*--[\}o\|]*)\s*([A-Za-z0-9_]+)"
         )
+        self.re_er_class_fix = re.compile(r"(?i)(^\s*)class\s+")
         self.re_er_is_rel = re.compile(r"[\}o\|]*(?:--|\.\.)[o\|\{]*")
         self.re_er_clean_entity_call = re.compile(
             r'([A-Za-z0-9_]+)\s*[\[\(]\s*"?([^"\]\)]+)"?[\]\)]?'
@@ -1090,6 +1150,12 @@ class MermaidSanitizer:
         self.re_er_leading_sign = re.compile(r"^(\s*)[\+\-\~]\s*")
         self.re_er_reversed_attr = re.compile(
             r"^(\s*)([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_]+)\s*$"
+        )
+        self.re_er_title = re.compile(
+            r"^(\s*)([a-zA-Z0-9_]+)\s+(PK|FK)\s*$", re.IGNORECASE
+        )
+        self.re_er_pk_fk = re.compile(
+            r"^(\s*)([a-zA-Z0-9_]+)\s+(PK|FK)\s*$", re.IGNORECASE
         )
         self.re_er_title = re.compile(
             r'^[A-Za-z0-9_]*\s*[\[\(]\s*"?([^"\]\)]+)"?[\]\)]?$'
@@ -1397,6 +1463,9 @@ class MermaidSanitizer:
         in_entity_block = False
 
         for line in lines:
+            # FIX: Sanitize hallucinated 'class' keyword from classDiagrams
+            line = self.re_er_class_fix.sub(r"\1", line)
+
             stripped = line.strip()
             lower_stripped = stripped.lower()
 
@@ -1504,6 +1573,12 @@ class MermaidSanitizer:
 
                 # Fix reversed attribute format
                 line = self.re_er_reversed_attr.sub(r"\1\3 \2", line)
+
+                # Fix: Abbreviated PK/FK syntax (e.g., `UserID PK`)
+                pk_fk_match = self.re_er_pk_fk.match(line)
+                if pk_fk_match:
+                    indent, attr, key = pk_fk_match.groups()
+                    line = f'{indent}string {attr} "{key.upper()}"'
 
                 cleaned_lines.append(line)
 
@@ -1825,67 +1900,6 @@ class MermaidSanitizer:
         return work_part
 
 
-# --- END MERMAID SANITIZER CLASS ---
-
-
-class TemplateSanitizer:
-    """
-    Handles EasyBrief specific template cleanup and enforcement logic.
-    Separated from MermaidSanitizer to maintain portability.
-    """
-
-    def __init__(self):
-        # Compile regex for Key Takeaways normalization
-        # Matches: Empty headers (##) before Key Takeaways, then Key Takeaways header
-        self.takeaways_pattern = re.compile(
-            r"(?:^|\n)(?:\s*#+\s*\n)*\s*#+\s*(?:[^\w\s]+)?\s*Key Takeaways",
-            flags=re.MULTILINE | re.UNICODE,
-        )
-
-        # Fix: Key Takeaways Header Normalization
-        self.re_takeaways_check = re.compile(r"---\s+### 📌 Key Takeaways")
-
-        # Fix: Hybrid Tables (Markdown wrapped in HTML <table>)
-        self.re_table_tag = re.compile(r"</?table>", re.IGNORECASE)
-
-        # Fix: Horizontal Rule Spacing
-        self.re_hr_spacing = re.compile(
-            r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*", flags=re.MULTILINE
-        )
-
-    def sanitize_stream(self, buffer: str) -> str:
-        """
-        Analyzes the rolling buffer and applies fixes like Emoji correction.
-        """
-        # Fix: Key Takeaways Header Normalization
-        # Force H3 level (###) and the correct emoji (📌) regardless of model output.
-        # Matches: "## Key Takeaways", "### 📚 Key Takeaways", etc.
-        if "Key Takeaways" in buffer:
-            # Idempotency check: if strictly correct format exists, skip to avoid loops
-            if self.re_takeaways_check.search(buffer):
-                return buffer
-
-            buffer = self.takeaways_pattern.sub(
-                "\n\n---\n### 📌 Key Takeaways",
-                buffer,
-            )
-
-        # Fix: Hybrid Tables (Markdown wrapped in HTML <table>)
-        # We strip <table> tags to let the Markdown renderer handle the content natively.
-        if "table>" in buffer.lower():
-            buffer = self.re_table_tag.sub("", buffer)
-
-        # Fix: Horizontal Rule Spacing
-        # Ensure '---' is surrounded by empty lines to prevent it from attaching to text
-        if "---" in buffer:
-            buffer = self.re_hr_spacing.sub(
-                "\n\n---\n\n",
-                buffer,
-            )
-
-        return buffer
-
-
 class StreamState:
     """
     Holds the state for a single stream session.
@@ -1902,7 +1916,7 @@ class StreamState:
         self.bypass = False
 
 
-class MermaidStreamProcessor:
+class StreamProcessor:
     """
     A portable State Machine for detecting and sanitizing Mermaid diagrams in a text stream.
     Decoupled from Open WebUI and EasyBrief specific logic via dependency injection.
@@ -1922,193 +1936,140 @@ class MermaidStreamProcessor:
 
         # Regex for block detection
         self.re_mermaid_block_start = re.compile(r"```\s*mermaid", re.IGNORECASE)
+        self.re_naked_mermaid_start = re.compile(
+            r"^\s*(mindmap|graph\s*TD|graph\s*LR|erDiagram|pie|gantt)\b",
+            re.IGNORECASE | re.MULTILINE,
+        )
         self.re_block_closure = re.compile(
             r"^[ \t]*(?:---|___|\*\*\*)[ \t]*$|^##+\s", re.MULTILINE
         )
         self.re_table_check = re.compile(r"^\s*table\s*|^\|", re.IGNORECASE)
-        self.re_hr_cleanup = re.compile(
-            r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*", re.MULTILINE
-        )
         self.re_keyword_cleanup = re.compile(r"^\s*table\s*", re.IGNORECASE)
         self.re_legacy_table = re.compile(r"\[table\]", re.IGNORECASE)
 
-        self.re_diagram_keywords = re.compile(
-            r"(?i)\[(mermaid|pie|graph(?:\s+[a-z]+)?|flowchart(?:\s+[a-z]+)?|mindmap|gantt|erdiagram|classdiagram|sequencediagram|statediagram(?:-v2)?|journey|timeline)(?:\]|\s)\s*"
-        )
-
-    def process(self, content: str, finish_reason: Any, valves: Any) -> str:
+    def _sanitize_template_chunk(self, content: str, finish_reason: Any) -> str:
         """
-        Process a chunk of text, update state, and return the sanitized chunk.
+        Sanitizes a chunk of non-Mermaid text using a rolling window buffer.
+        This method does NOT detect Mermaid blocks.
         """
         s = self.state
 
-        # Update global memory
-        s.full_text += content
-
-        # Output chunk accumulator
-        output_chunk = ""
-
-        # --- STATE MACHINE ---
-        if s.is_inside:
-            # === INSIDE MERMAID BLOCK ===
-            s.buffer += content
-
-            # --- LATE BINDING CHECK ---
-            if s.pending_tag:
-                stripped_buf = s.buffer.strip()
-
-                # 1. Fake Table Detection
-                if self.re_table_check.match(stripped_buf):
-                    s.is_fake_table = True
-                    s.pending_tag = ""  # Discard tag
-
-                # 2. Insufficient content -> Wait
-                elif len(stripped_buf) < 6 and not finish_reason:
-                    return ""
-
-                # 3. Valid Mermaid
-                else:
-                    output_chunk = s.pending_tag
-                    s.pending_tag = ""  # Tag emitted
-
-            # Handle implicit block closures
-            if "```" not in s.buffer:
-                match = self.re_block_closure.search(s.buffer)
-                if match:
-                    idx = match.start()
-                    s.buffer = s.buffer[:idx] + "\n```\n\n" + s.buffer[idx:]
-
-            # Check exit condition
-            if "```" in s.buffer or finish_reason:
-                s.is_inside = False
-
-                if "```" in s.buffer:
-                    parts = s.buffer.split("```", 1)
-                    raw_mermaid = parts[0]
-                    remainder = parts[1] if len(parts) > 1 else ""
-                else:
-                    raw_mermaid = s.buffer
-                    remainder = ""
-
-                    # Safety cut
-                    match = self.re_block_closure.search(raw_mermaid)
-                    if match:
-                        idx = match.start()
-                        remainder = raw_mermaid[idx:]
-                        raw_mermaid = raw_mermaid[:idx]
-
-                # Fix separator spacing for remainder
-                remainder = remainder.lstrip()
-                remainder = self.re_hr_cleanup.sub("\n\n---\n\n", remainder)
-
-                # === OUTPUT GENERATION ===
-                if s.is_fake_table:
-                    # Markdown table: clean 'table' keyword if present
-                    table_content = self.re_keyword_cleanup.sub("", raw_mermaid).strip()
-                    output_chunk += table_content + "\n\n" + remainder
-                    s.is_fake_table = False
-
-                else:
-                    # Mermaid Sanitization
-                    sanitized = self.mermaid._sanitize_mermaid(raw_mermaid, valves)
-
-                    # Add badge if modified
-                    if sanitized.strip() != raw_mermaid.strip():
-                        if self.debug:
-                            self.debug.log(
-                                f"Mermaid Sanitized! Original:\n{raw_mermaid}\nFixed:\n{sanitized}"
-                            )
-                        sanitized = (
-                            "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%\n" + sanitized
-                        )
-
-                    output_chunk += sanitized + "\n```\n\n" + remainder
-
-                s.buffer = ""
-                s.out_buffer = ""
-
-            else:
-                # Block still open, suppress output unless we already emitted pending tag
-                if output_chunk:
-                    return output_chunk
+        if not content:
+            # On finish_reason, we need to flush the final buffer even if content is empty
+            if not finish_reason or not s.out_buffer:
                 return ""
 
+        s.out_buffer += content
+        s.out_buffer = self.sanitize_text(s.out_buffer)
+
+        KEEP_CHARS = 30
+        # Always flush on finish_reason. Otherwise, use rolling window.
+        if finish_reason:
+            to_flush = s.out_buffer
+            s.out_buffer = ""
+        elif len(s.out_buffer) > KEEP_CHARS * 2:
+            to_flush = s.out_buffer[:-KEEP_CHARS]
+            s.out_buffer = s.out_buffer[-KEEP_CHARS:]
         else:
-            # === OUTSIDE (NORMAL TEXT) ===
-            s.out_buffer += content
+            return ""  # Not enough content to flush, keep buffering
 
-            # Generalize Mermaid diagram markers (e.g. [graph TD])
-            def _mermaid_repl(m):
-                raw_type = m.group(1).strip().lower()
-                if raw_type == "mermaid":
-                    return "\n```mermaid\n"
+        return self.re_legacy_table.sub("", to_flush)
 
-                # Default mapping
-                diagram_type = raw_type
+    def process(self, content: str, finish_reason: Any, valves: Any) -> str:
+        """
+        Orchestrates sanitization by dispatching content based on state.
+        This is the state-managing "dispatcher".
+        """
+        s = self.state
+        s.full_text += content
 
-                # Specific mappings
-                if "graph" in raw_type:
-                    diagram_type = "graph TD"
-                if "flowchart" in raw_type:
-                    diagram_type = "flowchart TD"
-                if "pie" in raw_type:
-                    diagram_type = "pie"
-                if "mindmap" in raw_type:
-                    diagram_type = "mindmap"
-                if "gantt" in raw_type:
-                    diagram_type = "gantt"
-                if "erdiagram" in raw_type:
-                    diagram_type = "erDiagram"
+        # STATE 1: We are NOT inside a Mermaid block. Look for a start trigger.
+        if not s.is_inside:
+            # Since content is a chunk, we need to check against the whole out_buffer
+            # to correctly identify triggers that may span across chunks.
+            temp_buffer = s.out_buffer + content
+            fenced_match = self.re_mermaid_block_start.search(temp_buffer)
+            naked_match = (
+                None
+                if fenced_match
+                else self.re_naked_mermaid_start.search(temp_buffer)
+            )
 
-                return f"\n```mermaid\n{diagram_type}\n"
+            if not (fenced_match or naked_match):
+                # No trigger found, process as plain text.
+                return self._sanitize_template_chunk(content, finish_reason)
 
-            # Use regex from init
-            s.out_buffer = self.re_diagram_keywords.sub(_mermaid_repl, s.out_buffer)
+            # A trigger was found. Process text *before* the trigger.
+            match = fenced_match or naked_match
+            start_index, _ = match.span()
 
-            # Check for Mermaid block entry
-            match = self.re_mermaid_block_start.search(s.out_buffer)
+            pre_block_text = temp_buffer[:start_index]
+            mermaid_and_remainder = temp_buffer[start_index:]
 
-            if match:
-                start, end = match.span()
-                pre_block = s.out_buffer[:start]
-                mermaid_start = s.out_buffer[end:]
+            # IMPORTANT: We only want to flush the content that is new.
+            # The existing out_buffer has already been processed up to its KEEP_CHARS tail.
+            # We flush the whole pre_block_text now.
+            s.out_buffer = pre_block_text
+            output = self._sanitize_template_chunk(
+                "", finish_reason=True
+            )  # Force flush
 
-                # Sanitize pre-block
-                sanitized_pre = self.sanitize_text(pre_block)
-                sanitized_pre = self.re_legacy_table.sub("", sanitized_pre)
+            # Now, handle the start of the Mermaid block
+            s.is_inside = True
+            s.buffer = (
+                mermaid_and_remainder  # The rest of the chunk goes into the buffer
+            )
 
-                if sanitized_pre and not sanitized_pre.endswith("\n"):
-                    sanitized_pre += "\n"
+            # We need to manually strip the trigger that put us here.
+            if fenced_match:
+                s.buffer = self.re_mermaid_block_start.sub("", s.buffer, count=1)
+                output += "```mermaid"
+            elif naked_match:
+                s.buffer = self.re_naked_mermaid_start.sub("", s.buffer, count=1)
+                output += "```mermaid\n"  # Inject the fence for naked diagrams
 
-                # LATE BINDING: Store tag
-                output_chunk = sanitized_pre
-                s.pending_tag = "```mermaid"
+            # If the stream ends right after the trigger, process what we have
+            if finish_reason:
+                output += self.process("", finish_reason, valves)
 
-                # Switch state
-                s.is_inside = True
-                s.is_fake_table = False
-                s.buffer = mermaid_start
-                s.out_buffer = ""
+            return output
 
-            else:
-                # Rolling Buffer Logic
-                s.out_buffer = self.sanitize_text(s.out_buffer)
+        # STATE 2: We ARE inside a Mermaid block. Buffer until it ends.
+        else:  # s.is_inside is True
+            s.buffer += content
 
-                KEEP_CHARS = 30
-                if len(s.out_buffer) > KEEP_CHARS * 2 or finish_reason:
-                    if finish_reason:
-                        to_flush = s.out_buffer
-                        s.out_buffer = ""
-                    else:
-                        to_flush = s.out_buffer[:-KEEP_CHARS]
-                        s.out_buffer = s.out_buffer[-KEEP_CHARS:]
+            if "```" not in s.buffer and not finish_reason:
+                # Block not closed yet, continue buffering and return nothing.
+                return ""
 
-                    to_flush = self.re_legacy_table.sub("", to_flush)
-                    output_chunk = to_flush
-                else:
-                    output_chunk = ""
+            # The block has ended. Sanitize it.
+            s.is_inside = False
 
-        return output_chunk
+            if "```" in s.buffer:
+                raw_mermaid, remainder = s.buffer.split("```", 1)
+            else:  # Stream finished while inside a block
+                raw_mermaid, remainder = s.buffer, ""
+
+            s.buffer = ""  # Clear buffer immediately
+
+            sanitized_mermaid = self.mermaid._sanitize_mermaid(raw_mermaid, valves)
+
+            if sanitized_mermaid.strip() != raw_mermaid.strip():
+                if "%% 💉 Sanitized by Mermaid Doctor 💉 %%" not in raw_mermaid:
+                    sanitized_mermaid = (
+                        "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%" + sanitized_mermaid
+                    )
+
+            # The sanitized block is ready.
+            output = sanitized_mermaid + "\n```\n"
+
+            # IMPORTANT: The remainder text must now be processed as plain text.
+            # We call process() again on the remainder to let the dispatcher handle it.
+            # This is safe because s.is_inside is now False.
+            return output + self.process(remainder, finish_reason, valves)
+
+
+# --------------------------------------------------------------------
 
 
 class Filter:
@@ -2280,7 +2241,7 @@ class Filter:
             if user_id not in self.processors:
                 state = StreamState()
                 state.bypass = True
-                self.processors[user_id] = MermaidStreamProcessor(
+                self.processors[user_id] = StreamProcessor(
                     state, self.mermaid_sanitizer, None, None
                 )
             else:
@@ -2297,7 +2258,7 @@ class Filter:
 
         # Activate MITM Stream Session
         state = StreamState()
-        self.processors[user_id] = MermaidStreamProcessor(
+        self.processors[user_id] = StreamProcessor(
             state=state,
             mermaid_sanitizer=self.mermaid_sanitizer,
             template_sanitizer_fn=self.template_sanitizer.sanitize_stream,
@@ -2461,7 +2422,7 @@ class Filter:
 
     async def stream(self, event: dict, __user__: Optional[dict] = None) -> dict:
         """
-        Man-in-the-Middle implementation using MermaidStreamProcessor.
+        Man-in-the-Middle implementation using StreamProcessor.
         """
         # Safely retrieve UserValves
         uv_data = __user__.get("valves", {}) if __user__ else {}
@@ -2475,7 +2436,7 @@ class Filter:
             state.bypass = (
                 True  # Default to bypass for safety if not initialized via inlet
             )
-            self.processors[user_id] = MermaidStreamProcessor(
+            self.processors[user_id] = StreamProcessor(
                 state=state,
                 mermaid_sanitizer=self.mermaid_sanitizer,
                 template_sanitizer_fn=self.template_sanitizer.sanitize_stream,
