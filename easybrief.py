@@ -110,7 +110,7 @@ Strictly return in JSON format:
 
 VISUAL_ASSETS = {
     "table": {
-        "rule": "IF comparative data (rows/cols) exists → USE Markdown Table. ELSE skip.",
+        "rule": "IF comparative data, statistics, market shares, temporal roadmaps, schedules or explicit percentages exist -> USE Markdown Table. DO NOT USE GANTT OR TIMELINE. ELSE skip.",
         "syntax": """**Tables**:
     RULES:
     1. Only MARKDOWN tables.
@@ -122,7 +122,7 @@ VISUAL_ASSETS = {
     """,
     },
     "mindmap": {
-        "rule": "IF hierarchical structure (root->branch->leaf) exists → USE Mermaid mindmap. ELSE skip.",
+        "rule": "IF hierarchical structure, taxonomies, or multi-level bulleted lists (root->branch->leaf) exist -> USE Mermaid mindmap. ELSE skip.",
         "syntax": """**Mindmaps**: Mermaid `mindmap`.
 
     RULES:
@@ -147,7 +147,7 @@ mindmap
     """,
     },
     "graph": {
-        "rule": "IF sequential process/flow/decision exists → USE Mermaid graph TD. ELSE skip.",
+        "rule": "IF AND ONLY IF sequential process, logical flow, decision tree, or algorithm exists -> USE Mermaid graph TD. ELSE skip.",
         "syntax": """**Flowcharts**: Mermaid `graph TD`.
     RULES:
     0. Act as a Mermaid.js Expert. First outline the process steps mentally, then generate code.
@@ -175,25 +175,22 @@ graph TD
     8. MENTALLY verify that the graph TD you are about to print strictly adheres to the previous 7 rules. If they are not all satisfied, mentally re-run the mindmap generation for maximum 10 times until all rules are met.
     """,
     },
-    "pie": {
-        "rule": "IF AND ONLY IF the text contains explicit numbers (percentages, fractions) -> USE Mermaid pie. ELSE -> SKIP.",
-        "syntax": """**Pie Charts**: Mermaid `pie`.
+    "erdiagram": {
+        "rule": "IF AND ONLY IF complex 'Many-to-Many' or 'One-to-Many' relationships between entities (e.g., Companies, Products, Stakeholders) exist that cannot be represented as a simple tree -> USE Mermaid erDiagram. ELSE skip.",
+        "syntax": """**ER Diagrams**: Mermaid `erDiagram`.
     RULES:
-    1. EXTRACT numbers directly from the source text.
-    2. If you cannot find explicit numerical data (e.g., %, ratios) in the source text, IT IS STRICTLY FORBIDDEN to output a pie chart.
-    3. Outputting a pie chart with guessed or estimated numbers is a SYSTEM FAILURE.
-    4. NO percentage symbol `%`. Use ONLY raw numbers.
-    5. CRITICAL: NO parentheses `()` in title.
-    6. Always specify the code-block type: ```mermaid.
-    7. Follow EXACTLY the syntax of the provided one-shot:
+    1. Only use `erDiagram` for fixed structural relationships, NOT for temporal processes.
+    2. Syntax: `ENTITY_1 ||--o{ ENTITY_2 : "Relationship"`
+    3. Use simple, alphanumeric names for entities without spaces.
+    4. Always specify the code-block type: ```mermaid.
+    5. Follow EXACTLY the syntax of the provided one-shot:
 ```mermaid
-pie
-    title Key Distribution
-    "Category A" : 40
-    "Category B" : 35
-    "Category C" : 25
+erDiagram
+    COMPANY ||--o{ PRODUCT : "manufactures"
+    COMPANY ||--|{ DEPARTMENT : "contains"
+    PRODUCT }|--|| CATEGORY : "belongs_to"
 ```\n\n
-    8. MENTALLY VERIFY: If the data is not in the source text, DO NOT generate the chart.
+    6. MENTALLY verify that the erDiagram you are about to print strictly adheres to the previous 5 rules. If they are not all satisfied, mentally re-run the erDiagram generation for maximum 10 times until all rules are met.
     """,
     },
 }
@@ -217,15 +214,15 @@ PROMPT_CONFIG = {
     },
     "schematic": {
         "action": "Reorganize text into a Visual Technical Report.",
-        "structure": "## [EMOJI] [TOPIC TITLE]\n**Context**: (1 sentence).\n[Mermaid Mindmap OR Graph TD.]",
-        "visuals": ["mindmap", "graph"],
+        "structure": "## [EMOJI] [TOPIC TITLE]\n**Context**: (1 sentence).\n[Select the best visual format from the ALLOWED list below.]",
+        "visuals": ["mindmap", "graph", "erdiagram"],
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Context**: [Context...]""",
     },
     "brief": {
         "action": "Generate a Structured Executive Report.",
         "structure": "## [EMOJI] [TOPIC TITLE]\n**Concept Synthesis**: ({{SYNTESYS_LENGTH}}).\n**Analytical Insight**: ({{ANALYSYS_LENGTH}}).\n(Do NOT generate separate headers for Concept/Insight).\n[Select the best visual format from the ALLOWED list below.]",
-        "visuals": ["table", "mindmap", "graph", "pie"],
+        "visuals": ["table", "mindmap", "graph", "erdiagram"],
         "repeat_rule": DEFAULT_REPEAT_RULE,
         "example_header": """## [YOUR EMOJI HERE] [WRITE YOUR TOPIC HERE..]
 **Concept Synthesis**: [Text...]
