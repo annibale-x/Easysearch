@@ -1057,9 +1057,9 @@ class TemplateSanitizer:
         # Fix: Hybrid Tables (Markdown wrapped in HTML <table>)
         self.re_table_tag = re.compile(r"</?table>", re.IGNORECASE)
 
-        # Fix: Horizontal Rule Spacing
+        # Fix: Horizontal Rule Spacing (aggressive cleanup of multiple separators)
         self.re_hr_spacing = re.compile(
-            r"(?:\r?\n)*^[ \t]*---[ \t]*$(?:\r?\n)*", flags=re.MULTILINE
+            r"((?:\r?\n\s*?---)+\s*?(?:\r?\n|$))+", flags=re.MULTILINE
         )
 
     def sanitize_stream(self, buffer: str) -> str:
@@ -1087,10 +1087,7 @@ class TemplateSanitizer:
         # Fix: Horizontal Rule Spacing
         # Ensure '---' is surrounded by empty lines to prevent it from attaching to text
         if "---" in buffer:
-            buffer = self.re_hr_spacing.sub(
-                "\n\n---\n\n",
-                buffer,
-            )
+            buffer = self.re_hr_spacing.sub("\n\n---\n\n", buffer)
 
         return buffer
 
@@ -1101,7 +1098,7 @@ class MermaidSanitizer:
     Implements the same logic as mermaid-doctor but in a modular component.
     """
 
-    SANITIZER_VERSION = "2.0.7"
+    SANITIZER_VERSION = "2.0.11"
 
     def __init__(self):
         # Common
@@ -1240,6 +1237,11 @@ class MermaidSanitizer:
 
         elif diagram_type == "gantt" or (not diagram_type and "gantt" in code_lower):
             code = self._sanitize_gantt(code)
+
+        if code != raw_code:
+            # print(f"RAW CODE : |{raw_code}|")
+            # print(f"SANITIZED: |{code}|")
+            code += "\n\n%% 💉 Sanitized by EasyBrief 💉 %%"
 
         return "\n" + code + "\n"
 
@@ -1868,6 +1870,8 @@ class MermaidSanitizer:
                 if shape_match:
                     open_sym = shape_match.group(1)
                     inner_txt = shape_match.group(2).replace('"', "'")
+                    # Fix: Clean trailing backslashes that break rendering
+                    inner_txt = inner_txt.rstrip(" \\")
                     close_sym = shape_match.group(3)
                     label_block = f'{open_sym}"{inner_txt}"{close_sym}'
 
@@ -2052,13 +2056,9 @@ class StreamProcessor:
 
             s.buffer = ""  # Clear buffer immediately
 
-            sanitized_mermaid = self.mermaid._sanitize_mermaid(raw_mermaid, valves)
-
-            if sanitized_mermaid.strip() != raw_mermaid.strip():
-                if "%% 💉 Sanitized by Mermaid Doctor 💉 %%" not in raw_mermaid:
-                    sanitized_mermaid = (
-                        "\n%% 💉 Sanitized by Mermaid Doctor 💉 %%" + sanitized_mermaid
-                    )
+            sanitized_mermaid = self.mermaid._sanitize_mermaid(
+                raw_mermaid.strip(), valves
+            )
 
             # The sanitized block is ready.
             output = sanitized_mermaid + "\n```\n"
@@ -2066,7 +2066,9 @@ class StreamProcessor:
             # IMPORTANT: The remainder text must now be processed as plain text.
             # We call process() again on the remainder to let the dispatcher handle it.
             # This is safe because s.is_inside is now False.
-            return output + self.process(remainder, finish_reason, valves)
+            # Process the sanitized mermaid through template sanitizer before returning
+            sanitized_output = self._sanitize_template_chunk(output, False)
+            return sanitized_output + self.process(remainder, finish_reason, valves)
 
 
 # --------------------------------------------------------------------
