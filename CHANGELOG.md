@@ -1,9 +1,16 @@
+* 2026-03-10: v0.5.15 - Code Compliance & Documentation Overhaul (Hannibal)  
+  * Compliance: Applied "Airy Code Style" formatting with mandatory blank lines before classes, after docstrings, and before control flow blocks (if/try/except).
+  * Documentation: Enhanced method docstrings with parameter descriptions and return values across all core classes (ConfigService, ShadowRequest, WebSearchHandler, DebugService, etc.).
+  * Sanitizer: Incremented MermaidSanitizer version to 2.0.14 reflecting compliance updates.
+  * Imports: Added missing `random` import for User‑Agent rotation in web fetching.
+  * Code Quality: Removed trailing whitespace, standardized internal spacing, and preserved all existing debug statements per project rules.
+
 * 2026-03-07: v0.5.14 - Sanitizer Architecture Overhaul & Visual Hardening (Hannibal)  
-  * **Architecture**: Split sanitization logic into `MermaidSanitizer` (portable) and `TemplateSanitizer` (EB-specific). Implemented unified Rolling Buffer in `stream` for robust real-time corrections.
-  * **Key Takeaways**: Enforced H3 header (`###`), correct emoji (`📌`), and separator (`---`). Added negative constraints to prevent duplication inside topic loops.
-  * **Visuals**: Hardened Pie Chart rules to prevent hallucinated data. Fixed "Fake Mermaid Tables" and stripped HTML `<table>` tags from Markdown tables.
-  * **Prompt**: Added explicit `<WORKFLOW>` section to `MASTER_PROMPT`. Restricted compact models (<12B) to tables only.
-  * **Bug Fixes**: Resolved stream truncation issues and `DebugService` attribute errors.
+  * Architecture: Split sanitization logic into `MermaidSanitizer` (portable) and `TemplateSanitizer` (EB-specific). Implemented unified Rolling Buffer in `stream` for robust real-time corrections.
+  * Key Takeaways: Enforced H3 header (`###`), correct emoji (`📌`), and separator (`---`). Added negative constraints to prevent duplication inside topic loops.
+  * Visuals: Hardened Pie Chart rules to prevent hallucinated data. Fixed "Fake Mermaid Tables" and stripped HTML `<table>` tags from Markdown tables.
+  * Prompt: Added explicit `<WORKFLOW>` section to `MASTER_PROMPT`. Restricted compact models (<12B) to tables only.
+  * Bug Fixes: Resolved stream truncation issues and `DebugService` attribute errors.
 
 * 2026-03-07: v0.5.13 - Legacy Sanitizer Removal & Debug Fix (Hannibal)  
   * Removed redundant legacy `_sanitize_output` and `_sanitize_text_markers` methods since sanitization is now fully handled in-stream.
@@ -200,4 +207,4 @@
 * **2026-02-17**: add README.md (Hannibal)                                                                                                                            
 * **2026-02-17**: v0.0.2 - Full reset (Hannibal)                                                                                                                      
 * **2026-02-16**: Add Easysearch section to README (Hannibal)                                                                                                         
-* **2026-02-16**: Initial commit (Hannibal)  
+* **2026-02-16**: Initial commit (Hannibal)

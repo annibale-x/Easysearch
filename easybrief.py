@@ -1,17 +1,18 @@
 """
 title: EasyBrief - Web Search & Executive Summaries
-version: 0.5.14
+version: 0.5.15
 author: Hannibal
 https://github.com/annibale-x/open-webui-easybrief
 author_email: annibale.x@gmail.com
 author_url: https://openwebui.com/u/h4nn1b4l
-description: Transform text and web search results into structured Executive Reports with tables and mindmaps using simple triggers (??, >>, v>, t>).
+description: Transform text and web search results into structured Executive Reports with tables and mindmaps using simple triggers.
 """
 
 import asyncio
 import datetime
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -310,7 +311,12 @@ class ConfigService:
     """
 
     def __init__(self, ctx):
-        """Initialize the ConfigService with context and default model state."""
+        """
+        Initialize ConfigService with execution context and default model state.
+
+        Args:
+            ctx: Filter context containing valves and user configuration
+        """
 
         self.ctx = ctx
         self.valves, self.user_valves = ctx.valves, ctx.user_valves
@@ -364,20 +370,26 @@ class ShadowRequest:
     """
 
     def __init__(self, original_request, overrides: Dict[str, Any]):
-        """Initialize the ShadowRequest with dynamic configuration overrides."""
+        """
+        Initialize ShadowRequest proxy with dynamic configuration overrides.
+
+        Args:
+            original_request: The original HTTP request object
+            overrides: Dictionary of configuration keys to override
+        """
 
         self._req = original_request
         self._overrides = overrides
 
         class ConfigProxy:
             def __init__(self, real_config, overrides):
-                """Initialize the ConfigProxy."""
+                """Initialize ConfigProxy with real configuration and override values."""
 
                 self._real = real_config
                 self._overrides = overrides
 
             def __getattr__(self, name):
-                """Intercept configuration attribute access."""
+                """Intercept configuration attribute access with override priority."""
 
                 if name in self._overrides:
                     return self._overrides[name]
@@ -385,13 +397,13 @@ class ShadowRequest:
 
         class StateProxy:
             def __init__(self, real_state, config_proxy):
-                """Initialize the StateProxy."""
+                """Initialize StateProxy with real state and configuration proxy."""
 
                 self._real = real_state
                 self.config = config_proxy
 
             def __getattr__(self, name):
-                """Intercept state attribute access."""
+                """Intercept state attribute access with config proxy delegation."""
 
                 if name == "config":
                     return self.config
@@ -399,30 +411,27 @@ class ShadowRequest:
 
         class AppProxy:
             def __init__(self, real_app, state_proxy):
-                """Initialize the AppProxy."""
+                """Initialize AppProxy with real application and state proxy."""
 
                 self._real = real_app
                 self.state = state_proxy
 
             def __getattr__(self, name):
-                """Intercept app attribute access."""
+                """Intercept application attribute access with state proxy delegation."""
 
                 if name == "state":
                     return self.state
                 return getattr(self._real, name)
 
-        real_app = original_request.app
-        real_state = real_app.state
-        real_config = real_state.config
-        self.app = AppProxy(
-            real_app, StateProxy(real_state, ConfigProxy(real_config, overrides))
-        )
+        self.config = ConfigProxy(self._req.app.state.config, overrides)
+        self.state = StateProxy(self._req.app.state, self.config)
+        self.app = AppProxy(self._req.app, self.state)
 
     def __getattr__(self, name):
-        """Delegate unrecognized attributes to the original request."""
+        """Delegate attribute access to wrapped request with config/state/app priority."""
 
-        if name == "app":
-            return self.app
+        if name in ("config", "state", "app"):
+            return getattr(self, name)
         return getattr(self._req, name)
 
 
@@ -475,7 +484,13 @@ class WebSearchHandler:
         self.user_obj = Users.get_user_by_id(user_id)
 
     def log(self, msg: str, is_error: bool = False):
-        """Log a debug message conditionally."""
+        """
+        Log debug message to DebugService if debug is enabled.
+
+        Args:
+            msg: Debug message to log
+            is_error: Whether this is an error message (True for errors)
+        """
 
         if self.debug:
             self.debug.log(f"[WebSearchHandler] {msg}", is_error)
@@ -487,6 +502,7 @@ class WebSearchHandler:
         Main entry point: Generates queries, executes search, emits citations, returns formatted context.
         Returns None if search fails or yields no results.
         """
+
         try:
             # 1. Generate Queries
             await self.em.emit_status("Generating Search Queries", False)
@@ -522,7 +538,8 @@ class WebSearchHandler:
             return None
 
     async def _generate_queries(self, text: str, model: str, count: int) -> List[str]:
-        """Uses LLM to expand the user request into multiple search queries."""
+        """Generate multiple search queries from user request using LLM expansion."""
+
         try:
             prompt = QUERY_GENERATION_TEMPLATE.format(
                 COUNT=count, DATE=datetime.date.today(), REQUEST=text
@@ -560,7 +577,7 @@ class WebSearchHandler:
 
     async def _execute_search(self, queries: List[str]) -> Any:
         """
-        Calls Open WebUI search with oversampling to ensure enough candidates after deduplication.
+        Execute Open WebUI search with oversampling for deduplication buffer.
         """
 
         try:
@@ -588,7 +605,7 @@ class WebSearchHandler:
 
     def _sanitize_url(self, url: str) -> str:
         """
-        Removes common tracking parameters and fragments from the URL to improve deduplication.
+        Remove tracking parameters and fragments from URL to improve deduplication.
         """
 
         from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -619,7 +636,7 @@ class WebSearchHandler:
 
     async def _fetch_concurrently(self, urls: List[str]) -> Dict[str, str]:
         """
-        Fetches multiple URLs in parallel using HTTPX with streaming, size limit and UA rotation.
+        Fetch multiple URLs in parallel using HTTPX with streaming, size limits and UA rotation.
         """
 
         if not HTTPX_AVAILABLE or not urls:
@@ -688,9 +705,10 @@ class WebSearchHandler:
 
     def _clean_with_lxml(self, raw_html: str) -> str:
         """
-        Uses lxml to strip HTML tags, scripts, styles, and structural noise.
-        Much more robust than Regex as it understands the DOM structure.
+        Strip HTML tags, scripts, styles, and structural noise using lxml DOM parsing.
+        More robust than regex-based approaches.
         """
+
         if not raw_html or not LXML_AVAILABLE:
             return ""
 
@@ -712,8 +730,8 @@ class WebSearchHandler:
 
     async def _process_results(self, results: Any) -> Optional[str]:
         """
-        Parses results, fetches raw HTML in parallel with a fallback mechanism (Gap-Filler).
-        Injects snippets from the entire oversampling pool for maximum signal.
+        Parse search results, fetch HTML in parallel with Gap-Filler fallback mechanism.
+        Inject snippets from oversampling pool for maximum information signal.
         """
 
         if not isinstance(results, dict) or "items" not in results:
@@ -901,18 +919,19 @@ class EmitterService:
     """
 
     def __init__(self, event_emitter, ctx):
-        """Initialize the EmitterService."""
+        """Initialize EmitterService with event emitter and context."""
+
         self.emitter, self.ctx = event_emitter, ctx
 
     async def emit_status(self, description: str, done: bool = False):
-        """Emit a status update to the frontend."""
+        """Emit status update event to frontend with completion indicator."""
         if self.emitter:
             await self.emitter(
                 {"type": "status", "data": {"description": description, "done": done}}
             )
 
     async def emit_citation(self, name: str, document: str, source: str):
-        """Emit a citation to the frontend."""
+        """Emit citation event to frontend with source metadata."""
         if self.emitter:
             await self.emitter(
                 {
@@ -927,8 +946,8 @@ class EmitterService:
 
     async def emit_search_queries(self, queries: List[str]):
         """
-        Emit search queries to trigger the native UI pills.
-        Uses the specific action ID required by Open WebUI frontend.
+        Emit search queries to trigger native UI search pills in Open WebUI frontend.
+        Uses specific action ID required for frontend integration.
         """
         if self.emitter:
             await self.emitter(
@@ -951,11 +970,18 @@ class DebugService:
     """
 
     def __init__(self, ctx):
-        """Initialize the DebugService."""
+        """Initialize DebugService with execution context."""
+
         self.ctx = ctx
 
     def log(self, msg: str, is_error: bool = False):
-        """Log a debug message to stderr."""
+        """
+        Log debug message to stderr with timestamp, delta time, and error indicator.
+
+        Args:
+            msg: The message to log
+            is_error: Whether this is an error message (uses ❌ emoji)
+        """
         is_debug = (
             self.ctx.ctx.model.debug if self.ctx.ctx else self.ctx.user_valves.debug
         )
@@ -968,7 +994,12 @@ class DebugService:
             )
 
     async def error(self, e: Any):
-        """Log an error and emit an error message to the UI."""
+        """
+        Log error to stderr and emit error message to UI with execution context.
+
+        Args:
+            e: Exception or error object to log and display
+        """
         self.log(str(e), is_error=True)
         if self.ctx:
             self.ctx.output_content += f"\n\n❌ {APP_NAME} ERROR: {str(e)}\n"
@@ -980,7 +1011,13 @@ class DebugService:
             )
 
     def dump(self, data: Any = None, label: str = "DUMP"):
-        """Dump a JSON representation of data to stderr for debugging."""
+        """
+        Dump JSON representation of data to stderr for debugging purposes.
+
+        Args:
+            data: Any data to dump (will be JSON serialized)
+            label: Label for the dump section in output
+        """
         is_debug = (
             self.ctx.ctx.model.debug if self.ctx.ctx else self.ctx.user_valves.debug
         )
@@ -995,7 +1032,12 @@ class DebugService:
         )
 
     def emit(self):
-        """Generate a Markdown-formatted debug dump for the UI."""
+        """
+        Generate Markdown-formatted debug dump for UI with sanitized sensitive data.
+
+        Returns:
+            str: Markdown formatted debug information or empty string if debug disabled
+        """
         # UI Debug is strictly User-controlled to prevent visual pollution
         if not self.ctx.user_valves.debug:
             return ""
@@ -1037,6 +1079,8 @@ class DebugService:
 
 
 # --------------------------------------------------------------------
+
+
 class TemplateSanitizer:
     """
     Handles EasyBrief specific template cleanup and enforcement logic.
@@ -1044,6 +1088,7 @@ class TemplateSanitizer:
     """
 
     def __init__(self):
+        """Initialize TemplateSanitizer with compiled regex patterns for template cleanup."""
         # Compile regex for Key Takeaways normalization
         # Matches: Empty headers (##) before Key Takeaways, then Key Takeaways header
         self.takeaways_pattern = re.compile(
@@ -1064,7 +1109,7 @@ class TemplateSanitizer:
 
     def sanitize_stream(self, buffer: str) -> str:
         """
-        Analyzes the rolling buffer and applies fixes like Emoji correction.
+        Analyze rolling buffer and apply template fixes: emoji correction, table cleanup, spacing.
         """
         # Fix: Key Takeaways Header Normalization
         # Force H3 level (###) and the correct emoji (📌) regardless of model output.
@@ -1098,7 +1143,7 @@ class MermaidSanitizer:
     Implements the same logic as mermaid-doctor but in a modular component.
     """
 
-    SANITIZER_VERSION = "2.0.11"
+    SANITIZER_VERSION = "2.0.14"
 
     def __init__(self):
         # Common
@@ -1195,7 +1240,12 @@ class MermaidSanitizer:
             "linkstyle",
         }
 
-    def _sanitize_mermaid(self, raw_code: str, valves: BaseModel) -> str:
+    def _sanitize_mermaid(
+        self,
+        raw_code: str,
+        valves: BaseModel,
+        debug_service: Optional[DebugService] = None,
+    ) -> str:
         """
         Cleans and enforces Mermaid syntax.
         Routes to specific sanitizers based on graph type.
@@ -1239,8 +1289,10 @@ class MermaidSanitizer:
             code = self._sanitize_gantt(code)
 
         if code != raw_code:
-            # print(f"RAW CODE : |{raw_code}|")
-            # print(f"SANITIZED: |{code}|")
+            if debug_service:
+                debug_service.log(
+                    f"\n\n--- MERMAID RAW ---\n\n{raw_code}\n\n--- MERMAID SANITIZED ---\n\n{code}\n\n"
+                )
             code += "\n\n%% 💉 Sanitized by EasyBrief 💉 %%"
 
         return "\n" + code + "\n"
@@ -2057,7 +2109,7 @@ class StreamProcessor:
             s.buffer = ""  # Clear buffer immediately
 
             sanitized_mermaid = self.mermaid._sanitize_mermaid(
-                raw_mermaid.strip(), valves
+                raw_mermaid.strip(), valves, self.debug
             )
 
             # The sanitized block is ready.
@@ -2178,13 +2230,14 @@ class Filter:
 
         @validator("default_brief_mode")
         def validate_mode(cls, v):
+            """Validate default brief mode against allowed values list."""
             if v not in ["brief", "schematic", "table", "nano"]:
                 raise ValueError("Mode must be: brief, schematic, table, nano")
             return v
 
     def __init__(self):
         """
-        Initialize the Filter with default valves and state.
+        Initialize Filter with default valves, state, and sanitization components.
         """
 
         self.valves, self.user_valves = self.Valves(), self.UserValves()
